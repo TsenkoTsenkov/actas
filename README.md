@@ -250,7 +250,8 @@ python3 -m unittest discover -s tests -v
 
 The tests use only the standard library and a temporary config directory.
 The sops round-trip test runs when `sops` and `age-keygen` are installed.
-CI runs the suite on Python 3.9 and 3.13.
+CI runs the suite on Python 3.10 and 3.13. To check 3.9:
+`uv run --no-project --python 3.9 python -m unittest discover -s tests`.
 
 ## License
 
