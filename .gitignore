@@ -1,0 +1,17 @@
+# This repo is the tool only. Personal configuration lives in ~/.config/ccenv
+# and must never be committed here.
+/environments.yaml
+/environments.json
+/secrets.enc.yaml
+/.sops.yaml
+*.dec.yaml
+*.decrypted.*
+keys.txt
+age-key*.txt
+
+# Local Claude Code settings (written by `ccenv sync`)
+.claude/settings.local.json
+
+__pycache__/
+*.pyc
+.DS_Store
