@@ -1,0 +1,76 @@
+# Example ccenv manifest in the version 1 format. ccenv 2 still reads it
+# unchanged; `ccenv migrate` prints it as version 2. New manifests should use
+# the version 2 format: see environments.yaml and docs/manifest.md.
+# Every name below is a placeholder.
+#
+# This file holds names and pointers only. Secret values live in
+# ~/.config/ccenv/secrets.enc.yaml, set with:  ccenv secret <env> <key> --set
+version: 1
+
+# Applied to every environment unless the environment sets its own value.
+defaults:
+  provider: subscription          # subscription -> api.anthropic.com
+
+environments:
+
+  # Personal projects: subscription login, personal GitHub account.
+  personal:
+    match:
+      - ~/code/personal           # this directory and everything below it
+      - ~/code/sandbox-*          # globs work too
+    github:
+      account: ada-personal       # an account listed by `gh auth status`
+      name: Ada Example
+      email: ada@example.com
+    aws:
+      profile: personal-sso       # from `aws configure list-profiles`
+      region: us-east-1
+
+  # Client work through the client's LLM gateway, with its own AWS and GitHub.
+  client-a:
+    match:
+      - ~/code/client-a
+    provider: gateway             # sets ANTHROPIC_BASE_URL; Remote Control and
+                                  # cloud sessions are unavailable
+    gateway:
+      base_url: https://llm-gateway.client-a.example
+      secret: token               # -> secrets.enc.yaml: client-a.token
+    aws:
+      profile: client-a-prod-readonly
+      region: eu-west-1
+    github:
+      account: ada-client-a
+      name: Ada Example
+      email: ada@client-a.example
+    env:
+      TF_IN_AUTOMATION: "1"       # plain, non-secret variables
+
+  # A nested repo that needs a different AWS account. The longest match wins,
+  # so this overrides client-a for anything under infra/.
+  client-a-infra:
+    match:
+      - ~/code/client-a/infra
+    provider: gateway
+    gateway:
+      base_url: https://llm-gateway.client-a.example
+      secret: token
+      secret_from: client-a       # reuse client-a's token instead of storing it twice
+    aws:
+      profile: client-a-infra-admin
+      region: eu-west-1
+    github:
+      account: ada-client-a
+      email: ada@client-a.example
+
+  # A repo none of your gh accounts can see: store a fine-grained token in
+  # the secrets file and export it into the session.
+  partner-org:
+    match:
+      - ~/code/partner-org
+    github:
+      name: Ada Example
+      email: ada@example.com
+    secret_env:
+      GH_TOKEN: gh_token          # env var -> key in secrets.enc.yaml
+      GITHUB_TOKEN: gh_token
+    claude_args: ["--permission-mode", "plan"]   # always passed to claude

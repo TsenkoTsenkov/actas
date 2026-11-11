@@ -1,0 +1,57 @@
+name: release
+
+# On a version tag (v2.0.0, v2.1.0b1, ...): attach the single-file ccenv,
+# install.sh and SHA256SUMS to a GitHub release, with a build-provenance
+# attestation for ccenv. Nothing is published to PyPI.
+#
+# Users can check a download with:
+#   gh attestation verify ccenv --repo <owner>/ccenv
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # create the release
+      id-token: write          # sign the attestation
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Run the tests
+        run: python -m unittest discover -s tests
+      - name: The tag matches __version__ in bin/ccenv
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(python bin/ccenv --version | awk '{ print $2 }')"
+          test "$TAG" = "v$version" || { echo "tag $TAG does not match ccenv $version" >&2; exit 1; }
+      - name: Build the assets
+        run: |
+          mkdir dist
+          install -m 0755 bin/ccenv dist/ccenv
+          install -m 0755 install.sh dist/install.sh
+          cd dist && sha256sum ccenv install.sh > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/attest@v4
+        with:
+          subject-path: dist/ccenv
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pre=""
+          case "${TAG#v}" in *[a-z]*) pre="--prerelease" ;; esac
+          gh release create "$TAG" dist/ccenv dist/install.sh dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "ccenv $TAG" --generate-notes --verify-tag $pre

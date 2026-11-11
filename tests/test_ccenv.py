@@ -4,18 +4,21 @@ Every test points CCENV_ROOT and XDG_CACHE_HOME at a temporary directory,
 so nothing here reads or writes your real configuration.
 """
 
-import importlib.machinery
-import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
-BIN = Path(__file__).resolve().parent.parent / "bin" / "ccenv"
+from ccenv_testlib import SYSTEM_PATH, Sandbox
+
+# The secrets round-trip needs the real sops and age (with a throwaway key in
+# a temp dir). It is opt-in so no default test run ever invokes real sops:
+# CCENV_TEST_REAL_SOPS=1 python3 -m unittest discover -s tests (CI sets it).
+REAL_SOPS = shutil.which("sops") if os.environ.get("CCENV_TEST_REAL_SOPS") else None
+REAL_AGE_KEYGEN = shutil.which("age-keygen") if REAL_SOPS else None
 
 MANIFEST = """{
   "version": 1,
@@ -40,39 +43,16 @@ MANIFEST = """{
 """
 
 
-def load(root, cache):
-    os.environ["CCENV_ROOT"] = str(root)
-    os.environ["XDG_CACHE_HOME"] = str(cache)
-    loader = importlib.machinery.SourceFileLoader("ccenv_under_test", str(BIN))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    mod = importlib.util.module_from_spec(spec)
-    loader.exec_module(mod)
-    return mod
+class Base(Sandbox):
+    """Isolated per test: HOME, CCENV_ROOT, CCENV_STATE, XDG dirs and a PATH
+    of fake binaries (see ccenv_testlib)."""
 
-
-class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
-        self.root = self.tmp / "cfg"
-        self.root.mkdir()
-        (self.root / "environments.yaml").write_text(MANIFEST % {"root": self.tmp})
+        super().setUp()
+        self.write_manifest(MANIFEST % {"root": self.tmp})
         for d in ("work/infra", "work/api", "oss/lib"):
             (self.tmp / d).mkdir(parents=True)
-        self.saved = {k: os.environ.get(k) for k in ("CCENV_ROOT", "XDG_CACHE_HOME")}
-        self.m = load(self.root, self.tmp / "cache")
-
-    def tearDown(self):
-        for k, v in self.saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-        shutil.rmtree(self.tmp)
-
-    def cli(self, *args, stdin=None):
-        env = dict(os.environ, CCENV_ROOT=str(self.root), XDG_CACHE_HOME=str(self.tmp / "cache"))
-        return subprocess.run([sys.executable, str(BIN), *args], input=stdin,
-                              capture_output=True, text=True, env=env)
+        self.m = self.reload()
 
 
 class Resolve(Base):
@@ -94,19 +74,23 @@ class Resolve(Base):
             self.m.resolve(cwd="/")
 
     def test_defaults_merge(self):
-        self.assertEqual(self.m.manifest()["oss"]["provider"], "subscription")
+        self.assertEqual(self.m.identities(self.m.resolve("oss"))["claude"]["provider"], "subscription")
 
 
 class Settings(Base):
     def test_subscription_cancels_gateway_vars(self):
-        env = self.m.build_env(self.m.resolve("work"))
-        self.assertEqual(env["ANTHROPIC_BASE_URL"], "")
-        self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "")
+        # 2.0: removed from the process env (v1 set ""); settings still blank them.
+        parent = dict(os.environ, ANTHROPIC_BASE_URL="https://gw", ANTHROPIC_AUTH_TOKEN="t")
+        res = self.m.assemble(self.m.resolve("work"), parent=parent)
+        env = self.m.child_env(res, parent)
+        self.assertNotIn("ANTHROPIC_BASE_URL", env)
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
         self.assertEqual(env["AWS_PROFILE"], "work-sso")
         self.assertEqual(env["CCENV"], "work")
+        self.assertEqual(self.m.settings_for(self.m.resolve("work"))["env"]["ANTHROPIC_BASE_URL"], "")
 
     def test_git_identity_is_per_process(self):
-        env = self.m.build_env(self.m.resolve("work"))
+        env = self.m.assemble(self.m.resolve("work"))["env"]
         pairs = {env[f"GIT_CONFIG_KEY_{i}"]: env[f"GIT_CONFIG_VALUE_{i}"]
                  for i in range(int(env["GIT_CONFIG_COUNT"]))}
         self.assertEqual(pairs["user.email"], "ada@example.com")
@@ -114,7 +98,7 @@ class Settings(Base):
     def test_gateway_token_never_in_settings(self):
         s = self.m.settings_for(self.m.resolve("work-infra"))
         self.assertEqual(s["env"]["ANTHROPIC_BASE_URL"], "https://llm-gateway.example.com")
-        self.assertIn(" secret work-infra token", s["apiKeyHelper"])
+        self.assertIn(" secret --ref sops:work-infra/token", s["apiKeyHelper"])
         self.assertNotIn("ANTHROPIC_AUTH_TOKEN", s["env"])
 
     def test_shell_values_are_quoted(self):
@@ -192,16 +176,21 @@ class Cli(Base):
     def test_init_fresh(self):
         fresh = self.tmp / "fresh"
         env = dict(os.environ, CCENV_ROOT=str(fresh), SOPS_AGE_KEY_FILE=str(self.tmp / "none"))
-        r = subprocess.run([sys.executable, str(BIN), "init"], capture_output=True, text=True, env=env)
+        r = subprocess.run([sys.executable, str(self.bin), "init"], capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((fresh / "environments.yaml").exists())
 
 
-@unittest.skipUnless(shutil.which("sops") and shutil.which("age-keygen"), "needs sops and age")
+@unittest.skipUnless(REAL_SOPS and REAL_AGE_KEYGEN, "set CCENV_TEST_REAL_SOPS=1 (needs sops and age)")
 class Secrets(Base):
+    def setUp(self):
+        super().setUp()
+        os.environ["PATH"] = os.pathsep.join(
+            [os.path.dirname(REAL_SOPS), os.path.dirname(REAL_AGE_KEYGEN), SYSTEM_PATH])
+
     def test_roundtrip_via_stdin(self):
         key = self.tmp / "age.txt"
-        subprocess.run(["age-keygen", "-o", str(key)], check=True, capture_output=True)
+        subprocess.run([REAL_AGE_KEYGEN, "-o", str(key)], check=True, capture_output=True)
         os.environ["SOPS_AGE_KEY_FILE"] = str(key)
         try:
             (self.root / "environments.yaml").rename(self.tmp / "m.bak")

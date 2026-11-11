@@ -1,42 +1,50 @@
 ---
 name: aws-handoff
-description: Mint short-lived AWS credentials for the current ccenv environment and copy a ready-to-paste block to the clipboard, for handing AWS access to a Claude Code cloud session that has no access to the local SSO cache.
-argument-hint: "[environment] [--profile NAME] [--duration SECONDS]"
+description: Get short-lived AWS credentials into a session that cannot see the local AWS SSO cache (for example a Claude Code cloud session). The user runs `ccenv aws-handoff` in their own terminal and pastes the result; the skill then verifies the identity.
+argument-hint: "[profile] [--profile NAME] [--duration SECONDS]"
 disable-model-invocation: true
-allowed-tools: Bash(ccenv:*), Bash(aws sts get-caller-identity:*)
+allowed-tools: Bash(aws sts get-caller-identity), Bash(aws sts get-caller-identity *)
 ---
 
 # AWS credential handoff
 
-Cloud sessions run on Anthropic infrastructure and cannot see `~/.aws`, so a
-cloud session has no AWS access until credentials are handed to it explicitly.
-This skill mints short-lived ones and puts them on the clipboard.
+Cloud sessions cannot see the user's `~/.aws` or SSO cache, so they have no
+AWS access until a human hands credentials over. `ccenv aws-handoff` mints
+short-lived ones on the user's machine. It is **human-only**: inside any agent
+session, ccenv refuses it with a `ccenv-stop: ... reason=human_only` line.
+So never run it yourself, and never ask for long-lived keys.
 
 ## Steps
 
-1. Run the handoff for the requested environment (with no argument it resolves
-   from the working directory):
+1. Tell the user, word for word (fill in the arguments, if any):
 
-   ```
-   ccenv aws-handoff $ARGUMENTS
-   ```
+   > On your own machine, in a terminal (not inside an agent session), run
+   > `ccenv aws-handoff $ARGUMENTS` and paste the result here.
 
-2. Report back to the user:
-   - which AWS profile and account the credentials are for
-   - when they expire
-   - that the block is on the clipboard, ready to paste into the cloud session
+   By default the block goes to their clipboard. With `--stdout` it is printed
+   instead.
 
-3. If the SSO session is expired, `ccenv aws-handoff` opens a browser to
-   refresh it. If that fails, tell the user to run `ccenv login <env>` and
-   retry. Do not retry in a loop yourself.
+2. If `ccenv aws-handoff` was already run inside this session and printed a
+   line starting with `ccenv-stop:`, it was refused. Show the user the
+   `ask_user` text exactly, which tells them to run it in their own terminal,
+   and stop. Do not retry.
+
+3. If the user reports that the AWS SSO session has expired (the command exits
+   with `ccenv-stop: code=expired`), tell them to run
+   `ccenv login <profile>` in their terminal first, then retry step 1. Running
+   `ccenv aws-handoff <profile> --login` does both. Never run `aws sso login`
+   yourself.
+
+4. The pasted block is a short shell snippet that writes `~/.aws/credentials`
+   (and the region to `~/.aws/config`) in this session. After it has run, run
+   `aws sts get-caller-identity` and report the account and the role (from the
+   ARN) to the user.
 
 ## Important
 
-Whatever is pasted into a cloud session becomes part of that session's
-transcript. `ccenv` will never hand over a long-lived access key — it trades
-static IAM keys for a session token first — but still keep the TTL as short as
-the task allows, and prefer a profile with a narrow role.
-
-Never print the credential block into this conversation. It goes to the
-clipboard only. If the user explicitly asks to see it, remind them it will be
-recorded in this transcript before doing so.
+- The credentials become part of this session's transcript. Keep the TTL
+  short (`--duration` applies when ccenv has to trade static keys for a
+  session token), and prefer a profile with a narrow role.
+- ccenv never hands over a long-lived access key. It trades static IAM keys
+  for a session token first.
+- Do not repeat the credential values in your replies.

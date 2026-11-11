@@ -1,0 +1,863 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""ccenv - per-environment credentials and config for Claude Code.
+
+Like ~/.aws/config, but for everything a Claude Code session needs:
+the model provider, AWS profile, GitHub identity, and project env vars.
+
+The manifest is plaintext. Secrets live beside it in a sops+age encrypted
+file. Nothing secret is ever written to disk in the clear.
+"""
+
+import argparse
+import fnmatch
+import glob
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+__version__ = "0.1.0"
+
+HOME = Path.home()
+ROOT = Path(os.environ.get("CCENV_ROOT", HOME / ".config" / "ccenv"))
+MANIFEST = ROOT / "environments.yaml"
+SECRETS = ROOT / "secrets.enc.yaml"
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "ccenv"
+
+# Environment and secret names end up inside sops path expressions; keep
+# them to a safe character set so a name can never alter the expression.
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+BOLD, DIM, RED, GRN, YEL, CYA, RST = (
+    "\033[1m", "\033[2m", "\033[31m", "\033[32m", "\033[33m", "\033[36m", "\033[0m"
+)
+if not sys.stdout.isatty():
+    BOLD = DIM = RED = GRN = YEL = CYA = RST = ""
+
+
+def die(msg, code=1):
+    print(f"{RED}ccenv:{RST} {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def warn(msg):
+    print(f"{YEL}ccenv:{RST} {msg}", file=sys.stderr)
+
+
+def info(msg):
+    print(f"{DIM}ccenv:{RST} {msg}", file=sys.stderr)
+
+
+def run(cmd, **kw):
+    kw.setdefault("capture_output", True)
+    kw.setdefault("text", True)
+    return subprocess.run(cmd, **kw)
+
+
+# ---------------------------------------------------------------- manifest
+
+def check_name(kind, value):
+    if not isinstance(value, str) or not NAME_RE.match(value):
+        die(f"invalid {kind} name {value!r}: use letters, digits, '.', '_' or '-'")
+    return value
+
+
+def load_yaml(path):
+    """Parse the manifest with the first parser available: PyYAML, then the
+    `yq` binary, then plain JSON (YAML is a superset of JSON), so ccenv runs
+    on a bare Python install."""
+    text = Path(path).read_text()
+    try:
+        import yaml
+        return yaml.safe_load(text) or {}
+    except ImportError:
+        pass
+    if shutil.which("yq"):
+        r = run(["yq", "-o", "json", "."], input=text)
+        if r.returncode == 0:
+            return json.loads(r.stdout or "{}")
+    try:
+        return json.loads(text)
+    except ValueError:
+        die("cannot parse the manifest: install PyYAML or yq, or write it as JSON")
+
+
+def manifest():
+    if not MANIFEST.exists():
+        die(f"no manifest at {MANIFEST}\n       run: ccenv init")
+    m = load_yaml(MANIFEST)
+    if not isinstance(m, dict):
+        die(f"{MANIFEST}: top level must be a mapping")
+    envs = m.get("environments") or {}
+    defaults = m.get("defaults") or {}
+    if not isinstance(envs, dict) or not isinstance(defaults, dict):
+        die(f"{MANIFEST}: `environments` and `defaults` must be mappings")
+    merged = {}
+    for name, env in envs.items():
+        check_name("environment", name)
+        if env is not None and not isinstance(env, dict):
+            die(f"{MANIFEST}: environment {name!r} must be a mapping")
+        e = json.loads(json.dumps(defaults))
+        e.update(env or {})
+        e["name"] = name
+        merged[name] = e
+    return merged
+
+
+def expand(p):
+    return os.path.abspath(os.path.expanduser(os.path.expandvars(str(p))))
+
+
+def resolve(name=None, cwd=None):
+    """Pick an environment by name, or by matching the working directory
+    against each environment's `match` globs. Longest match wins, so a
+    subdirectory rule beats the parent repo's rule."""
+    envs = manifest()
+    if name:
+        if name not in envs:
+            die(f"unknown environment {name!r}. known: {', '.join(sorted(envs)) or '(none)'}"
+                f"\n       see: ccenv list")
+        return envs[name]
+
+    cwd = expand(cwd or os.getcwd())
+    best, best_len = None, -1
+    for env in envs.values():
+        pats = env.get("match") or []
+        if isinstance(pats, str):
+            pats = [pats]
+        for pat in pats:
+            pat = expand(pat)
+            hit = cwd == pat or cwd.startswith(pat.rstrip("/") + "/") or fnmatch.fnmatch(cwd, pat)
+            if hit and len(pat) > best_len:
+                best, best_len = env, len(pat)
+    if not best:
+        die(f"no environment matches {cwd}\n       add a `match:` rule, or pass a name explicitly")
+    return best
+
+
+# ----------------------------------------------------------------- secrets
+
+def sops_bin():
+    s = shutil.which("sops")
+    if not s:
+        die("sops not found (brew install sops age)")
+    return s
+
+
+def age_key_file():
+    """sops resolves its default key path with Go's UserConfigDir, which on
+    macOS is ~/Library/Application Support, not ~/.config. Point it at
+    whichever location actually holds the key."""
+    if os.environ.get("SOPS_AGE_KEY_FILE"):
+        return os.environ["SOPS_AGE_KEY_FILE"]
+    for c in (HOME / ".config" / "sops" / "age" / "keys.txt",
+              HOME / "Library" / "Application Support" / "sops" / "age" / "keys.txt"):
+        if c.exists():
+            return str(c)
+    return None
+
+
+def sops_env():
+    e = dict(os.environ)
+    k = age_key_file()
+    if k:
+        e["SOPS_AGE_KEY_FILE"] = k
+    return e
+
+
+def secret_path(env_name, key):
+    return f'["{check_name("environment", env_name)}"]["{check_name("secret", key)}"]'
+
+
+def secret_get(env_name, key):
+    if not SECRETS.exists():
+        die(f"no secrets file at {SECRETS}")
+    r = run([sops_bin(), "-d", "--extract", secret_path(env_name, key), str(SECRETS)], env=sops_env())
+    if r.returncode != 0:
+        die(f"could not read secret {env_name}.{key}: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def secret_has(env_name, key):
+    if not SECRETS.exists():
+        return False
+    r = run([sops_bin(), "-d", "--extract", secret_path(env_name, key), str(SECRETS)], env=sops_env())
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
+def secret_set(env_name, key, value):
+    path = secret_path(env_name, key)
+    sops = sops_bin()
+    if not SECRETS.exists():
+        SECRETS.parent.mkdir(parents=True, exist_ok=True)
+        SECRETS.write_text("_meta:\n  managed_by: ccenv\n")
+        # sops looks for .sops.yaml from the current directory upwards, so
+        # name it explicitly - ccenv is usually run from a project directory.
+        cfg = ROOT / ".sops.yaml"
+        if not cfg.exists():
+            SECRETS.unlink()
+            die(f"no {cfg} saying who can decrypt secrets (run: ccenv init)")
+        r = run([sops, "--config", str(cfg), "-e", "-i", str(SECRETS)], env=sops_env())
+        if r.returncode != 0:
+            SECRETS.unlink()
+            die(f"could not initialise secrets file: {r.stderr.strip()}")
+    r = run([sops, "set", str(SECRETS), path, json.dumps(value)], env=sops_env())
+    if r.returncode != 0:
+        die(f"could not write secret: {r.stderr.strip()}")
+
+
+# --------------------------------------------------------------------- aws
+
+def aws_ok(profile, timeout=None):
+    try:
+        r = run(["aws", "sts", "get-caller-identity", "--profile", profile], timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None  # unknown - do not hold up the launch
+    return r.returncode == 0
+
+
+def aws_login(profile):
+    info(f"refreshing AWS SSO for profile {BOLD}{profile}{RST}")
+    return subprocess.run(["aws", "sso", "login", "--profile", profile]).returncode == 0
+
+
+def aws_ensure(profile, interactive=True):
+    if not profile:
+        return True
+    if aws_ok(profile):
+        return True
+    if not interactive:
+        return False
+    return aws_login(profile) and aws_ok(profile)
+
+
+def warn_expired(current=None):
+    """Probe every AWS profile the manifest uses, in parallel, and print one
+    warning listing the environments whose credentials have expired."""
+    from concurrent.futures import ThreadPoolExecutor
+    by_profile = {}
+    for n, e in sorted(manifest().items()):
+        pr = (e.get("aws") or {}).get("profile")
+        if pr:
+            by_profile.setdefault(pr, []).append(n)
+    if not by_profile:
+        return
+    with ThreadPoolExecutor(max_workers=len(by_profile)) as ex:
+        ok = dict(zip(by_profile, ex.map(lambda pr: aws_ok(pr, timeout=6), by_profile)))
+    expired = [(pr, envs) for pr, envs in by_profile.items() if ok[pr] is False]
+    if not expired:
+        return
+    warn("expired AWS credentials (not refreshing - log in only if you need them):")
+    for pr, envs in expired:
+        mark = f" {BOLD}<- this session{RST}" if current in envs else ""
+        print(f"         {', '.join(envs):<26} aws:{pr:<16} ccenv login {envs[0]}{mark}",
+              file=sys.stderr)
+
+
+def aws_portals():
+    """Map each distinct SSO portal to the profiles that use it, so one
+    browser round-trip covers every profile sharing that portal."""
+    cfg = HOME / ".aws" / "config"
+    if not cfg.exists():
+        return {}
+    portals, profile, url = {}, None, None
+    for line in cfg.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            if profile and url:
+                portals.setdefault(url, []).append(profile)
+            profile = line[1:-1].removeprefix("profile ").strip()
+            url = None
+        elif "=" in line:
+            k, _, v = line.partition("=")
+            if k.strip() == "sso_start_url":
+                url = v.strip()
+    if profile and url:
+        portals.setdefault(url, []).append(profile)
+    return portals
+
+
+# ------------------------------------------------------------------ github
+
+def gh_token(account):
+    """Read a stored token for a specific account without switching the
+    globally active one, so parallel sessions can use different identities."""
+    if not account:
+        return None
+    r = run(["gh", "auth", "token", "--user", account])
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return r.stdout.strip()
+
+
+def gh_accounts():
+    r = run(["gh", "auth", "status"])
+    out = r.stdout + r.stderr
+    found = []
+    for line in out.splitlines():
+        if "Logged in to" in line and "account" in line:
+            found.append(line.split("account")[-1].strip().split()[0])
+    return found
+
+
+# ------------------------------------------------------------ env assembly
+
+def build_env(env, want_secrets=True):
+    """Produce the process environment for a session in this environment."""
+    out = {}
+    name = env["name"]
+
+    aws = env.get("aws") or {}
+    if aws.get("profile"):
+        out["AWS_PROFILE"] = aws["profile"]
+    if aws.get("region"):
+        out["AWS_REGION"] = aws["region"]
+        out["AWS_DEFAULT_REGION"] = aws["region"]
+
+    gh = env.get("github") or {}
+    if gh.get("account"):
+        tok = gh_token(gh["account"])
+        if tok:
+            out["GH_TOKEN"] = tok
+            out["GITHUB_TOKEN"] = tok
+        else:
+            warn(f"no stored gh token for account {gh['account']!r} "
+                 f"(run: gh auth login --hostname github.com)")
+
+    # Per-process git identity and credential helper. Nothing touches
+    # ~/.gitconfig, so two sessions can push as two different people.
+    gitcfg = []
+    if gh.get("name"):
+        gitcfg.append(("user.name", gh["name"]))
+    if gh.get("email"):
+        gitcfg.append(("user.email", gh["email"]))
+    if out.get("GH_TOKEN"):
+        helper = ('!f(){ test "$1" = get && '
+                  'printf "username=x-access-token\\npassword=%s\\n" "$GH_TOKEN"; }; f')
+        gitcfg.append(("credential.https://github.com.helper", ""))
+        gitcfg.append(("credential.https://github.com.helper", helper))
+    if gitcfg:
+        out["GIT_CONFIG_COUNT"] = str(len(gitcfg))
+        for i, (k, v) in enumerate(gitcfg):
+            out[f"GIT_CONFIG_KEY_{i}"] = k
+            out[f"GIT_CONFIG_VALUE_{i}"] = v
+
+    provider = (env.get("provider") or "subscription").lower()
+    if provider == "gateway":
+        gw = env.get("gateway") or {}
+        if not gw.get("base_url"):
+            die(f"environment {name!r} is provider: gateway but has no gateway.base_url")
+        out["ANTHROPIC_BASE_URL"] = gw["base_url"]
+        if want_secrets:
+            key = gw.get("secret", "token")
+            out["ANTHROPIC_AUTH_TOKEN"] = secret_get(gw.get("secret_from", name), key)
+    else:
+        # Cancel any gateway variables leaking in from the parent shell.
+        # Claude Code treats an empty value as unset for provider selection.
+        out["ANTHROPIC_BASE_URL"] = ""
+        out["ANTHROPIC_AUTH_TOKEN"] = ""
+        out["ANTHROPIC_API_KEY"] = ""
+
+    for k, v in (env.get("env") or {}).items():
+        out[str(k)] = str(v)
+
+    # A missing optional secret should not stop a session from starting.
+    for k, key in (env.get("secret_env") or {}).items():
+        if not want_secrets:
+            continue
+        if secret_has(name, key):
+            out[str(k)] = secret_get(name, key)
+        else:
+            warn(f"secret {name}.{key} is not set, leaving {k} unset "
+                 f"(run: ccenv secret {name} {key} --set)")
+
+    out["CCENV"] = name
+    return out
+
+
+def settings_for(env):
+    """Settings passed via --settings. Non-secret only: the gateway token
+    arrives through apiKeyHelper so it never lands on disk."""
+    name = env["name"]
+    provider = (env.get("provider") or "subscription").lower()
+    s = {"env": {}}
+    if provider == "gateway":
+        gw = env.get("gateway") or {}
+        s["env"]["ANTHROPIC_BASE_URL"] = gw["base_url"]
+        # Claude Code runs apiKeyHelper through a shell: quote every part.
+        s["apiKeyHelper"] = " ".join(shlex.quote(x) for x in (
+            shutil.which("ccenv") or "ccenv", "secret",
+            gw.get("secret_from", name), gw.get("secret", "token")))
+    else:
+        s["env"]["ANTHROPIC_BASE_URL"] = ""
+        # A global apiKeyHelper (e.g. a gateway key in ~/.claude/settings.json)
+        # would otherwise send that key to api.anthropic.com -> x-api-key error.
+        s["apiKeyHelper"] = ""
+    aws = env.get("aws") or {}
+    if aws.get("profile"):
+        s["env"]["AWS_PROFILE"] = aws["profile"]
+        s["awsAuthRefresh"] = f"aws sso login --profile {shlex.quote(aws['profile'])}"
+    if aws.get("region"):
+        s["env"]["AWS_REGION"] = aws["region"]
+    for k, v in (env.get("env") or {}).items():
+        s["env"][str(k)] = str(v)
+    return s
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_run(a):
+    env = resolve(a.env, a.cwd)
+    name = env["name"]
+    aws = env.get("aws") or {}
+    profile = aws.get("profile")
+    # Never log in unless asked to with --login. Otherwise just report which
+    # environments have expired credentials and start anyway.
+    if a.login and profile:
+        if not aws_ensure(profile):
+            die(f"AWS SSO login failed for profile {profile}")
+    if not a.no_check:
+        warn_expired(current=name)
+
+    proc_env = dict(os.environ)
+    proc_env.update(build_env(env))
+
+    sf = CACHE / f"{name}.settings.json"
+    write_private(sf, json.dumps(settings_for(env), indent=2))
+
+    cmd = ["claude", "--settings", str(sf)]
+    if env.get("claude_args"):
+        cmd += list(env["claude_args"])
+    cmd += a.args
+
+    provider = (env.get("provider") or "subscription").lower()
+    badge = f"{CYA}{name}{RST} · {provider}"
+    if aws.get("profile"):
+        badge += f" · aws:{aws['profile']}"
+    if (env.get("github") or {}).get("account"):
+        badge += f" · gh:{env['github']['account']}"
+    info(badge)
+
+    os.execvpe(cmd[0], cmd, proc_env)
+
+
+def cmd_shell(a):
+    """Print export lines for `eval "$(ccenv shell <name>)"`."""
+    env = resolve(a.env, a.cwd)
+    for k, v in build_env(env).items():
+        print(f"export {k}={shell_quote(v)}")
+
+
+def shell_quote(s):
+    return shlex.quote(str(s))
+
+
+def write_private(path, text):
+    """Write a file readable only by the owner, with no window in which it
+    exists with looser permissions."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(path, 0o600)
+
+
+def cmd_list(a):
+    envs = manifest()
+    if not envs:
+        print("no environments defined")
+        return
+    for name in sorted(envs):
+        e = envs[name]
+        provider = (e.get("provider") or "subscription").lower()
+        aws = (e.get("aws") or {}).get("profile") or "-"
+        gh = (e.get("github") or {}).get("account") or "-"
+        remote = "yes" if provider != "gateway" else f"{DIM}no (gateway){RST}"
+        line = (f"{BOLD}{name:<20}{RST} provider={provider:<13} "
+                f"aws={aws:<22} gh={gh:<22} remote={remote}")
+        if a.check:
+            ok = aws_ok(aws) if aws != "-" else None
+            mark = "-" if ok is None else (f"{GRN}ok{RST}" if ok else f"{RED}expired{RST}")
+            line += f" awsauth={mark}"
+            if provider == "gateway":
+                gwc = e.get("gateway") or {}
+                key = gwc.get("secret", "token")
+                has = secret_has(gwc.get("secret_from", name), key)
+                line += f" secret={GRN + 'ok' + RST if has else RED + 'missing' + RST}"
+        print(line)
+
+
+def cmd_login(a):
+    if a.all:
+        # Only portals backing a profile some environment uses - not every
+        # profile that happens to be in ~/.aws/config.
+        used = {(e.get("aws") or {}).get("profile") for e in manifest().values()} - {None}
+        portals = {}
+        for url, profiles in aws_portals().items():
+            mine = [pr for pr in profiles if pr in used]
+            if mine:
+                portals[url] = mine
+        if not portals:
+            die("no environment uses an SSO profile from ~/.aws/config")
+        info(f"{len(portals)} SSO portals for profiles: {', '.join(sorted(used))}")
+        for url, profiles in portals.items():
+            rep = profiles[0]
+            if aws_ok(rep):
+                print(f"{GRN}ok{RST}      {url}  ({len(profiles)} profiles)")
+                continue
+            print(f"{YEL}login{RST}   {url}  ({len(profiles)} profiles)")
+            aws_login(rep)
+        return
+    env = resolve(a.env, a.cwd)
+    profile = (env.get("aws") or {}).get("profile")
+    if not profile:
+        die(f"environment {env['name']!r} has no aws.profile")
+    aws_login(profile)
+
+
+def cmd_secret(a):
+    if a.set:
+        val = a.value
+        if val is not None:
+            warn("a value passed as an argument is visible in shell history and `ps`; "
+                 "omit it to be prompted, or pipe it on stdin")
+        elif sys.stdin.isatty():
+            import getpass
+            val = getpass.getpass(f"value for {a.env}.{a.key}: ")
+        else:
+            val = sys.stdin.read().rstrip("\n")
+        if not val:
+            die("refusing to store an empty secret")
+        secret_set(a.env, a.key, val)
+        info(f"stored {a.env}.{a.key} in {SECRETS}")
+        return
+    sys.stdout.write(secret_get(a.env, a.key))
+
+
+def cmd_sync(a):
+    """Write .claude settings into each project so the right provider and
+    AWS profile apply even when Claude Code is launched without ccenv."""
+    envs = manifest()
+    targets = [envs[a.env]] if a.env else list(envs.values())
+    for env in targets:
+        pats = env.get("match") or []
+        if isinstance(pats, str):
+            pats = [pats]
+        dirs = []
+        for pat in pats:
+            ex = expand(pat)
+            hits = sorted(glob.glob(ex)) if any(ch in ex for ch in "*?[") else [ex]
+            dirs += [Path(h) for h in hits if os.path.isdir(h)]
+        for d in dirs:
+            cdir = d / ".claude"
+            cdir.mkdir(parents=True, exist_ok=True)
+            fname = "settings.json" if a.shared else "settings.local.json"
+            f = cdir / fname
+            existing = json.loads(f.read_text()) if f.exists() else {}
+            new = settings_for(env)
+            new_env = new.pop("env", {})
+            ex_env = existing.setdefault("env", {})
+            # Drop ccenv-managed keys the environment no longer sets, so
+            # removing e.g. an aws block also removes it from the project.
+            for k in ("AWS_PROFILE", "AWS_REGION"):
+                if k not in new_env:
+                    ex_env.pop(k, None)
+            if "awsAuthRefresh" not in new:
+                existing.pop("awsAuthRefresh", None)
+            ex_env.update(new_env)
+            existing.update(new)
+            f.write_text(json.dumps(existing, indent=2) + "\n")
+            print(f"{GRN}wrote{RST} {f}  ({env['name']})")
+
+
+def cmd_aws_handoff(a):
+    """Mint short-lived credentials and format them for a cloud session.
+
+    Cloud sessions run on Anthropic infrastructure with no access to your
+    SSO cache, so this is the bridge. The credentials go into the session
+    transcript, so keep the TTL short and the role narrow.
+    """
+    env = resolve(a.env, a.cwd)
+    aws = env.get("aws") or {}
+    profile = a.profile or aws.get("profile")
+    region = aws.get("region") or os.environ.get("AWS_REGION")
+    if region and not re.match(r"^[a-z0-9-]+$", region):
+        die(f"invalid AWS region {region!r}")
+    if not profile:
+        die(f"environment {env['name']!r} has no aws.profile")
+    if not aws_ensure(profile):
+        die(f"could not refresh AWS SSO for {profile}")
+
+    r = run(["aws", "configure", "export-credentials",
+             "--profile", profile, "--format", "process"])
+    if r.returncode != 0:
+        die(f"export-credentials failed: {r.stderr.strip()}")
+    c = json.loads(r.stdout)
+
+    # Anything pasted into a chat lands in the session transcript, so never
+    # hand over a long-lived access key. SSO profiles are already temporary;
+    # static IAM keys get traded for a session token first.
+    if not c.get("SessionToken") or not c.get("Expiration"):
+        info(f"profile {profile} has long-lived keys - trading them for a "
+             f"{a.duration}s session token")
+        t = run(["aws", "sts", "get-session-token",
+                 "--duration-seconds", str(a.duration), "--profile", profile])
+        if t.returncode != 0:
+            die("profile has long-lived credentials and get-session-token "
+                f"failed, refusing to hand them over: {t.stderr.strip()}")
+        cr = json.loads(t.stdout)["Credentials"]
+        c = {"AccessKeyId": cr["AccessKeyId"],
+             "SecretAccessKey": cr["SecretAccessKey"],
+             "SessionToken": cr["SessionToken"],
+             "Expiration": str(cr["Expiration"])}
+
+    block = (
+        "Set up AWS credentials for this session by running exactly this, "
+        "then confirm with `aws sts get-caller-identity`:\n\n"
+        "```bash\n"
+        "mkdir -p ~/.aws && cat > ~/.aws/credentials <<'AWSEOF'\n"
+        "[default]\n"
+        f"aws_access_key_id = {c['AccessKeyId']}\n"
+        f"aws_secret_access_key = {c['SecretAccessKey']}\n"
+        f"aws_session_token = {c.get('SessionToken', '')}\n"
+        "AWSEOF\n"
+        + (f"printf '[default]\\nregion = {region}\\n' > ~/.aws/config\n" if region else "")
+        + "chmod 600 ~/.aws/credentials\n"
+        "```\n"
+    )
+    if shutil.which("pbcopy") and not a.stdout:
+        subprocess.run(["pbcopy"], input=block, text=True)
+        info(f"copied to clipboard · profile {BOLD}{profile}{RST} · expires {c.get('Expiration', '?')}")
+        info("paste it into the cloud session chat")
+        warn("these credentials will be stored in that session's transcript")
+    else:
+        sys.stdout.write(block)
+
+
+INIT_MANIFEST = """\
+# ccenv manifest - one entry per working context.
+# Plaintext: names and pointers only. Secrets go in secrets.enc.yaml via
+#   ccenv secret <env> <key> --set
+# Full reference: https://github.com/TsenkoTsenkov/ccenv#manifest-reference
+version: 1
+
+defaults:
+  provider: subscription
+
+environments:
+  personal:
+    match:
+      - ~/code/personal
+    # aws:
+    #   profile: my-sso-profile
+    #   region: us-east-1
+    # github:
+    #   account: my-gh-login        # any account from `gh auth status`
+    #   name: Your Name
+    #   email: you@example.com
+"""
+
+
+def cmd_init(a):
+    """Create the config directory with a starter manifest and, when an age
+    key exists, a .sops.yaml that encrypts secrets to it. Never overwrites."""
+    ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if MANIFEST.exists():
+        info(f"exists, left alone: {MANIFEST}")
+    else:
+        MANIFEST.write_text(INIT_MANIFEST)
+        print(f"{GRN}wrote{RST} {MANIFEST}")
+    sops_cfg = ROOT / ".sops.yaml"
+    key = age_key_file()
+    pub = None
+    if key and Path(key).exists():
+        for line in Path(key).read_text().splitlines():
+            if line.startswith("# public key:"):
+                pub = line.split(":", 1)[1].strip()
+                break
+    if sops_cfg.exists():
+        info(f"exists, left alone: {sops_cfg}")
+    elif pub:
+        sops_cfg.write_text(
+            "# Who can decrypt secrets.enc.yaml. Add a key, then run:\n"
+            "#   sops updatekeys secrets.enc.yaml\n"
+            "creation_rules:\n"
+            "  - path_regex: secrets\\.enc\\.yaml$\n"
+            f"    age: {pub}   # comma-separate to add more\n")
+        print(f"{GRN}wrote{RST} {sops_cfg}  (age key {pub[:16]}...)")
+    else:
+        warn("no age key found - secrets are disabled until you create one:\n"
+             "       age-keygen -o ~/.config/sops/age/keys.txt && ccenv init")
+    print(f"next: edit {MANIFEST}, then run `ccenv doctor` and `ccenv list`")
+
+
+def cmd_doctor(a):
+    print(f"{BOLD}manifest{RST}  {MANIFEST}  {'ok' if MANIFEST.exists() else RED + 'missing' + RST}")
+    print(f"{BOLD}secrets{RST}   {SECRETS}  {'ok' if SECRETS.exists() else RED + 'missing' + RST}")
+    for tool in ("claude", "aws", "gh", "sops", "age"):
+        p = shutil.which(tool)
+        print(f"{BOLD}{tool:<9}{RST} {p or RED + 'MISSING' + RST}")
+    key = age_key_file()
+    print(f"{BOLD}age key{RST}   {key or RED + 'missing' + RST}")
+    accts = gh_accounts()
+    print(f"{BOLD}gh accts{RST}  {', '.join(accts) if accts else RED + 'none' + RST}")
+    portals = aws_portals()
+    print(f"{BOLD}aws{RST}       {len(portals)} SSO portals, "
+          f"{sum(len(v) for v in portals.values())} profiles")
+    leaked = [v for v in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "AWS_PROFILE")
+              if os.environ.get(v)]
+    if leaked:
+        print(f"{YEL}shell exports that ccenv will override:{RST} {', '.join(leaked)}")
+    try:
+        g = json.loads((Path.home() / ".claude" / "settings.json").read_text())
+        gl = [k for k in ("apiKeyHelper",) if g.get(k)]
+        if (g.get("env") or {}).get("ANTHROPIC_BASE_URL"):
+            gl.append("env.ANTHROPIC_BASE_URL")
+        if gl:
+            print(f"{YEL}~/.claude/settings.json sets {', '.join(gl)}:{RST} applies to every project "
+                  f"not covered by `ccenv sync`; subscription envs override it when synced")
+    except (OSError, ValueError):
+        pass
+
+
+class Parser(argparse.ArgumentParser):
+    """On any usage error, show the full help menu instead of a one-line
+    usage string, plus a hint for the most common mistakes."""
+
+    def error(self, message):
+        self.print_help(sys.stderr)
+        hint = ""
+        if "unrecognized arguments" in message:
+            hint = "\n       to pass arguments to claude, put them after --  (ccenv run <env> -- --resume)"
+        elif "invalid choice" in message:
+            import difflib, re
+            m = re.search(r"invalid choice: '([^']*)'", message)
+            choices = re.findall(r"'([^']*)'", message.split("choose from", 1)[-1])
+            close = difflib.get_close_matches(m.group(1), choices, n=1) if m else []
+            if close:
+                hint = f"\n       did you mean: {close[0]}?"
+        print(f"\n{RED}ccenv: error:{RST} {message}{hint}", file=sys.stderr)
+        sys.exit(2)
+
+
+def command_reference(sub):
+    lines = ["commands:"]
+    for name, sp in sub.choices.items():
+        usage = " ".join(sp.format_usage().split()[1:])  # drop "usage:"
+        usage = usage.replace(" [--cwd CWD]", "")
+        lines.append(f"  {usage}")
+        for act in sp._actions:
+            if act.option_strings and act.dest not in ("help", "cwd"):
+                lines.append(f"      {', '.join(act.option_strings):<16} {act.help or ''}")
+    lines += [
+        "",
+        "examples:",
+        "  ccenv run                     launch claude in the env matching the cwd",
+        "  ccenv run work -- --resume    pass arguments to claude after --",
+        "  ccenv run --login             also refresh AWS SSO before starting",
+        "  ccenv login work              refresh AWS SSO for one environment",
+        "  ccenv --cwd ~/code/x shell    print the env vars for another directory",
+        "  ccenv list --check            show environments and auth status",
+        "  ccenv help <command>          detailed help for one command",
+    ]
+    return "\n".join(lines)
+
+
+def main():
+    p = Parser(prog="ccenv", description=__doc__,
+               formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--cwd", help="resolve the environment as if from this directory")
+    p.add_argument("--version", action="version", version=f"ccenv {__version__}")
+    sub = p.add_subparsers(dest="cmd", required=True, metavar="<command>")
+
+    # --cwd is accepted after the command too (`ccenv run --cwd DIR`).
+    # SUPPRESS keeps the subcommand default from clobbering a value given
+    # before the command.
+    cwd_opt = argparse.ArgumentParser(add_help=False)
+    cwd_opt.add_argument("--cwd", default=argparse.SUPPRESS,
+                         help="resolve the environment as if from this directory")
+    _add = sub.add_parser
+    sub.add_parser = lambda *x, **k: _add(*x, parents=[cwd_opt], **k)
+
+    i = sub.add_parser("init", help="create the config directory and a starter manifest")
+    i.set_defaults(fn=cmd_init)
+
+    r = sub.add_parser("run", help="launch Claude Code in an environment")
+    r.add_argument("env", nargs="?", help="environment name (default: match cwd)")
+    r.add_argument("--login", action="store_true",
+                   help="refresh this environment's AWS SSO first if expired (default: only warn)")
+    r.add_argument("--no-check", "--no-login", dest="no_check", action="store_true",
+                   help="skip the expired-credentials check")
+    r.set_defaults(fn=cmd_run)
+
+    s = sub.add_parser("shell", help="print export lines for eval")
+    s.add_argument("env", nargs="?")
+    s.set_defaults(fn=cmd_shell)
+
+    l = sub.add_parser("list", help="list environments")
+    l.add_argument("--check", action="store_true", help="also probe AWS and secret availability")
+    l.set_defaults(fn=cmd_list)
+
+    lo = sub.add_parser("login", help="refresh AWS SSO")
+    lo.add_argument("env", nargs="?")
+    lo.add_argument("--all", action="store_true",
+                    help="one login per SSO portal used by any environment")
+    lo.set_defaults(fn=cmd_login)
+
+    se = sub.add_parser("secret", help="read or write a secret")
+    se.add_argument("env")
+    se.add_argument("key")
+    se.add_argument("value", nargs="?", help="with --set; omit to be prompted or pipe on stdin")
+    se.add_argument("--set", action="store_true",
+                    help="store a value instead of printing it")
+    se.set_defaults(fn=cmd_secret)
+
+    sy = sub.add_parser("sync", help="write .claude settings into project directories")
+    sy.add_argument("env", nargs="?")
+    sy.add_argument("--shared", action="store_true",
+                    help="write settings.json (committed) instead of settings.local.json")
+    sy.set_defaults(fn=cmd_sync)
+
+    ah = sub.add_parser("aws-handoff", help="short-lived AWS creds for a cloud session")
+    ah.add_argument("env", nargs="?")
+    ah.add_argument("--profile", help="override the environment's profile")
+    ah.add_argument("--stdout", action="store_true", help="print instead of copying")
+    ah.add_argument("--duration", type=int, default=3600,
+                    help="TTL in seconds when trading static keys for a session token")
+    ah.set_defaults(fn=cmd_aws_handoff)
+
+    d = sub.add_parser("doctor", help="check the setup")
+    d.set_defaults(fn=cmd_doctor)
+
+    h = sub.add_parser("help", help="show help for ccenv or one command")
+    h.add_argument("topic", nargs="?", metavar="command")
+    h.set_defaults(fn=lambda a: (sub.choices[a.topic] if a.topic in sub.choices else p).print_help()
+                   if not a.topic or a.topic in sub.choices
+                   else p.error(f"unknown command {a.topic!r}"))
+
+    p.epilog = command_reference(sub)
+
+    argv = sys.argv[1:]
+    passthrough = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, passthrough = argv[:i], argv[i + 1:]
+
+    if not argv:
+        p.print_help()
+        sys.exit(0)
+    a = p.parse_args(argv)
+    a.args = passthrough
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)

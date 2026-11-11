@@ -1,0 +1,13 @@
+version: 2
+profiles:
+  personal:
+    match: ~/code/personal
+    git:    { name: Ada Example, email: ada@example.com }
+    github: { auth: "gh:ada-personal" }
+    aws:    { profile: personal, region: eu-west-1 }
+  client-a:
+    match: ~/code/client-a
+    git:    { name: Ada Example, email: ada@client-a.example }
+    github: { auth: "gh:ada-client-a" }
+    aws:    { profile: client-a-dev, region: eu-west-1 }
+    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:ccenv/client-a" }

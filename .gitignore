@@ -15,3 +15,10 @@ age-key*.txt
 __pycache__/
 *.pyc
 .DS_Store
+
+# Package builds (uv build)
+/dist/
+/build/
+docs/demo/out/
+uv.lock
+.venv/

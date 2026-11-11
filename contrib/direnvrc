@@ -1,0 +1,11 @@
+# ccenv for direnv: put this in ~/.config/direnv/direnvrc, then add
+# `use ccenv` (or `use ccenv <profile>`) to a project's .envrc.
+use_ccenv() {
+  local out
+  watch_file "${CCENV_ROOT:-$HOME/.config/ccenv}/environments.yaml"
+  out="$(ccenv --cwd "$PWD" shell ${1:+"$1"} --no-secrets --format direnv)" || {
+    log_error "ccenv failed"
+    return 1
+  }
+  eval "$out"
+}

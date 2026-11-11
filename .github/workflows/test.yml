@@ -10,24 +10,65 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is end-of-life and no longer offered on current runners; it is
-        # still supported and checked locally with `uv run --python 3.9`.
+        os: [ubuntu-latest, macos-latest]
         python: ["3.10", "3.13"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - name: Install sops and age for the secrets round-trip test
+      # Tests run against fake gh/aws/sops binaries (tests/ccenv_testlib.py).
+      # The one real-sops round trip (a throwaway age key in a temp dir) is
+      # opt-in through CCENV_TEST_REAL_SOPS=1.
+      - name: Install sops and age (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q age
           curl -fsSLo /tmp/sops https://github.com/getsops/sops/releases/download/v3.9.4/sops-v3.9.4.linux.amd64
           echo "5488e32bc471de7982ad895dd054bbab3ab91c417a118426134551e9626e4e85  /tmp/sops" | sha256sum -c -
           sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+          echo "CCENV_TEST_REAL_SOPS=1" >> "$GITHUB_ENV"
+      - name: Install sops and age (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install sops age
+          echo "CCENV_TEST_REAL_SOPS=1" >> "$GITHUB_ENV"
       - run: python -m unittest discover -s tests -v
+
+  # Python 3.9 is end-of-life and setup-python no longer offers it on
+  # current runners; uv still provides it. ccenv supports 3.9+.
+  python39:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3 (no floating v10 tag)
+      - run: uv run --no-project --python 3.9 python -m unittest discover -s tests -v
+
+  # The uv/pipx package and install.sh. Nothing is published.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3 (no floating v10 tag)
+      - name: Build the sdist and wheel
+        run: uv build
+      - name: The packaged command reports the script's version
+        run: |
+          want="$(python3 bin/ccenv --version)"
+          got="$(uv tool run --from ./dist/*.whl ccenv --version)"
+          echo "script: $want / package: $got"
+          test "$want" = "$got"
+      - name: Lint install.sh
+        run: |
+          sh -n install.sh
+          shellcheck -s sh install.sh

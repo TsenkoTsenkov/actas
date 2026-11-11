@@ -1,74 +1,107 @@
-# Example ccenv manifest. Copy to ~/.config/ccenv/environments.yaml (or run
-# `ccenv init`) and adapt. Every name below is a placeholder.
+# Example ccenv manifest (version 2). Copy to ~/.config/ccenv/environments.yaml
+# and adapt. Every name below is a placeholder. Reference: docs/manifest.md.
 #
-# This file holds names and pointers only. Secret values live in
-# ~/.config/ccenv/secrets.enc.yaml, set with:  ccenv secret <env> <key> --set
-version: 1
+# The four rules:
+#   1. Later layers win, maps merge.
+#   2. `null` means off: the tool sees no account.
+#   3. Compose upward: a profile is at least as privileged as what it uses.
+#   4. A secret is always `scheme:path` (sops:, keychain:, op://, gh:, cmd:).
+#
+# This file holds names and references only, never secret values.
+version: 2
 
-# Applied to every environment unless the environment sets its own value.
+# The first layer of every profile. match, use, description, agents_may_use,
+# level and confirm are not allowed here (put them in a role and `use:` it).
 defaults:
-  provider: subscription          # subscription -> api.anthropic.com
+  git: { name: Ada Example, email: ada@example.com }
 
-environments:
+# Used when no profile matches the current directory.
+fallback: scratch
 
-  # Personal projects: subscription login, personal GitHub account.
+roles:
+  # --- identity pieces -------------------------------------------------------
+  gh-personal-ro:
+    level: readonly
+    github: { auth: "sops:personal/gh_ro_pat" }     # fine-grained PAT, read-only
+  gh-personal:
+    github: { auth: "gh:ada-personal" }             # a gh login: full repo scope, so not "readonly"
+  aws-personal-ro:
+    level: readonly
+    aws: { profile: personal-readonly, region: eu-west-1 }
+  aws-personal-power:
+    level: power
+    aws: { profile: personal-poweruser }            # region still comes from aws-personal-ro
+  corp-gateway:
+    claude:
+      provider: gateway
+      base_url: https://llm-gateway.corp.example
+      token: "sops:corp-gateway/token"              # one secret, shared by every user of the role
+
+  # --- permission sets: roles that only carry agent rules ----------------------
+  no-pulumi:
+    permissions: { deny: ["Bash(pulumi up *)", "Bash(pulumi destroy *)"] }
+  no-apply:
+    permissions: { deny: ["Bash(terraform apply *)", "Bash(terraform destroy *)"] }
+
+  # --- a recipe (docs/recipes.md): a tool without a built-in module -----------
+  npm-client-a:
+    secret_env: { NPM_TOKEN: "sops:client-a/npm" }  # .npmrc: //registry.npmjs.org/:_authToken=${NPM_TOKEN}
+
+  client-a-base:
+    use: [corp-gateway, npm-client-a]
+    git: { email: ada@client-a.example }
+    github: { auth: "gh:ada-client-a" }
+
+profiles:
   personal:
-    match:
-      - ~/code/personal           # this directory and everything below it
-      - ~/code/sandbox-*          # globs work too
-    github:
-      account: ada-personal       # an account listed by `gh auth status`
-      name: Ada Example
-      email: ada@example.com
-    aws:
-      profile: personal-sso       # from `aws configure list-profiles`
-      region: us-east-1
+    description: Personal projects, read-only credentials
+    match: [~/code/personal, ~/code/sandbox-*]
+    use: [gh-personal-ro, aws-personal-ro, no-pulumi]       # level readonly
 
-  # Client work through the client's LLM gateway, with its own AWS and GitHub.
-  client-a:
-    match:
-      - ~/code/client-a
-    provider: gateway             # sets ANTHROPIC_BASE_URL; Remote Control and
-                                  # cloud sessions are unavailable
-    gateway:
-      base_url: https://llm-gateway.client-a.example
-      secret: token               # -> secrets.enc.yaml: client-a.token
-    aws:
-      profile: client-a-prod-readonly
-      region: eu-west-1
-    github:
-      account: ada-client-a
-      name: Ada Example
-      email: ada@client-a.example
-    env:
-      TF_IN_AUTOMATION: "1"       # plain, non-secret variables
+  personal-power:                                           # "similar, plus AWS PowerUserAccess"
+    description: Personal, with AWS PowerUser (typed confirmation)
+    use: [personal, aws-personal-power]                     # read-only PAT kept; AWS becomes PowerUser
+    confirm: true                                           # level power; a human types the name
 
-  # A nested repo that needs a different AWS account. The longest match wins,
-  # so this overrides client-a for anything under infra/.
-  client-a-infra:
-    match:
-      - ~/code/client-a/infra
-    provider: gateway
-    gateway:
-      base_url: https://llm-gateway.client-a.example
-      secret: token
-      secret_from: client-a       # reuse client-a's token instead of storing it twice
-    aws:
-      profile: client-a-infra-admin
-      region: eu-west-1
-    github:
-      account: ada-client-a
-      email: ada@client-a.example
+  work:                                                     # a second claude.ai subscription
+    match: [~/code/oss-work]
+    claude: { home: work }                                  # its own login, settings and history
+    github: { auth: "gh:ada-oss" }
 
-  # A repo none of your gh accounts can see: store a fine-grained token in
-  # the secrets file and export it into the session.
-  partner-org:
-    match:
-      - ~/code/partner-org
-    github:
-      name: Ada Example
-      email: ada@example.com
-    secret_env:
-      GH_TOKEN: gh_token          # env var -> key in secrets.enc.yaml
-      GITHUB_TOKEN: gh_token
-    claude_args: ["--permission-mode", "plan"]   # always passed to claude
+  client-a-test:
+    match: [~/code/client-a, ~/code/client-a-*]
+    use: [client-a-base]                                    # level standard (the default)
+    aws: { profile: client-a-test-dev, region: eu-west-1 }
+    env: { TF_IN_AUTOMATION: "1" }                          # plain, non-secret variables
+    agents_may_use: [client-a-prod]                         # an agent here may run prod read-only commands
+
+  client-a-prod:
+    match: [~/code/client-a/infra/prod]                     # the longest match wins
+    use: [client-a-base, no-apply]                          # a sibling of test, never built on it
+    level: readonly
+    github: { auth: "sops:client-a-prod/gh_ro_pat" }        # a read PAT replaces the gh account
+    aws: { profile: client-a-prod-readonly, region: eu-west-1 }
+
+  client-b:
+    match: [~/code/client-b]
+    git: { email: ada@client-b.example }
+    github: { auth: "gh:ada-client-b" }
+    gcp: { home: client-b, project: client-b-dev,
+           impersonate: viewer@client-b-dev.iam.gserviceaccount.com }
+    aws: null                                               # no AWS: the aws CLI sees an empty config
+
+  client-c:
+    match: [~/code/client-c]
+    use: [corp-gateway]
+    azure: { home: client-c, subscription: 00000000-0000-0000-0000-000000000000,
+             tenant: 11111111-1111-1111-1111-111111111111 }
+    aws: null
+
+  partner:
+    match: [~/code/partner-org]
+    github: { auth: "sops:partner/gh_token" }               # a PAT; git gets a credential helper for it
+    tool: codex                                             # `ccenv run` launches Codex here
+    codex: { home: partner }                                # `ccenv login partner` signs Codex in once
+
+  scratch:                                                  # the fallback: read-only, nothing attached
+    level: readonly
