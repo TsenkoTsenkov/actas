@@ -599,6 +599,10 @@ class G4Parser(Sandbox):
         noyaml.mkdir()
         (noyaml / "yaml.py").write_text("raise ImportError('no PyYAML here')\n")
         os.environ["PYTHONPATH"] = str(noyaml)
+        # Shadow any system yq (GitHub's Ubuntu runners ship mikefarah/yq).
+        yq = self.fakebin / "yq"
+        yq.write_text("#!/bin/sh\nexit 1\n")
+        yq.chmod(0o755)
 
     # F19/F41: init writes a starter this machine can read; doctor reports instead of dying.
     def test_f19_f41_bare_python_init_and_doctor(self):
