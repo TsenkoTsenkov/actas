@@ -202,7 +202,7 @@ def scene_manifest():
         "[dim]version:[/] [o]2[/]",
         "[b]defaults:[/] { [b]git[/]: { [b]name[/]: Ada Example, [b]email[/]: ada@example.com } }",
         "[b]roles:[/]                                      [dim]# reusable pieces, merged with use:[/]",
-        "  [y]aws-ro[/]:    { [b]level[/]: readonly, [b]aws[/]: { [b]profile[/]: personal-readonly } }",
+        "  [y]aws-ro[/]:    { [b]level[/]: readonly, [b]aws[/]: { [b]profile[/]: personal-readonly, [b]region[/]: eu-west-1 } }",
         "  [y]aws-power[/]: { [b]level[/]: power,    [b]aws[/]: { [b]profile[/]: personal-poweruser } }",
         "  [y]gh-ro[/]:     { [b]level[/]: readonly, [b]github[/]: { [b]auth[/]: [g]\"sops:personal/gh_ro_pat\"[/] } }",
         "  [y]corp-gateway[/]:",
@@ -227,7 +227,7 @@ def scene_manifest():
     ]
     s.snap(500)
     for ln in y:
-        t.lines.append(ln.replace("[gh-ro, aws-ro]", "[gh-ro, aws-ro]").replace("[personal, aws-power]", "[personal, aws-power]").replace("[corp-gateway]", "[corp-gateway]"))
+        t.lines.append(ln)
         s.snap(140)
     s.snap(4200)
 

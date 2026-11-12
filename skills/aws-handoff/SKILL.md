@@ -1,7 +1,7 @@
 ---
 name: aws-handoff
 description: Get short-lived AWS credentials into a session that cannot see the local AWS SSO cache (for example a Claude Code cloud session). The user runs `ccenv aws-handoff` in their own terminal and pastes the result; the skill then verifies the identity.
-argument-hint: "[profile] [--profile NAME] [--duration SECONDS]"
+argument-hint: "[profile] [--profile NAME] [--duration SECONDS] [--stdout] [--login]"
 disable-model-invocation: true
 allowed-tools: Bash(aws sts get-caller-identity), Bash(aws sts get-caller-identity *)
 ---
@@ -35,8 +35,9 @@ So never run it yourself, and never ask for long-lived keys.
    `ccenv aws-handoff <profile> --login` does both. Never run `aws sso login`
    yourself.
 
-4. The pasted block is a short shell snippet that writes `~/.aws/credentials`
-   (and the region to `~/.aws/config`) in this session. After it has run, run
+4. The pasted block is a short shell snippet that replaces `~/.aws/credentials`
+   (and `~/.aws/config` when a region is known) with a `[default]` profile in
+   this session. After it has run, run
    `aws sts get-caller-identity` and report the account and the role (from the
    ARN) to the user.
 

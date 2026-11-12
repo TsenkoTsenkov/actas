@@ -18,12 +18,19 @@ Credentials here come from ccenv. They follow the session, not the directory.
 ## How to use this skill
 
 1. Run `ccenv status --json`. Read these fields:
-   - `profile` and `level`: who this session is, and `readonly`, `standard` or `power`.
+   - `session.profile` / `session.source`: if `session.profile` is null, this
+     session has no ccenv profile (ccenv did not start it and no synced
+     settings name one). Your environment may not hold the reported profile's
+     credentials, and `ccenv exec` works only for this directory's readonly
+     profile. Ask the user to start you with `ccenv run`.
+   - `profile` and `level`: the profile ccenv resolved (the session's, or the
+     directory's when there is no session), and `readonly`, `standard` or `power`.
    - `mismatch`: true when the current directory is matched to another profile
      (not when only the fallback profile covers it).
-   - `agents_may_use`: the other profiles you may `exec` without the user.
+   - `agents_may_use`: profiles you may try with `ccenv exec` (same or lower
+     level, no `confirm`; in a nested run the outer session's list applies).
    - `identities`: the AWS profile, GitHub account, git identity and LLM provider in effect.
-2. Run the command when the profile is right.
+2. Run the command when `session.profile` is set and the profile is right.
 3. When you need another profile, run `ccenv list --json` to see the names,
    then `ccenv exec <profile> --reason "<why>" -- <one command>`. Claude asks
    the user before it runs `ccenv exec`, and ccenv then decides on its own.

@@ -1,5 +1,6 @@
 # Example ccenv manifest (version 2). Copy to ~/.config/ccenv/environments.yaml
 # and adapt. Every name below is a placeholder. Reference: docs/manifest.md.
+# Needs ccenv 2.0 (beta 2.0.0b1); `ccenv --version` shows yours.
 #
 # The four rules:
 #   1. Later layers win, maps merge.
@@ -23,7 +24,7 @@ roles:
   gh-personal-ro:
     level: readonly
     github: { auth: "sops:personal/gh_ro_pat" }     # fine-grained PAT, read-only
-  gh-personal:
+  gh-personal:                                      # not used below; shown for contrast with gh-personal-ro
     github: { auth: "gh:ada-personal" }             # a gh login: full repo scope, so not "readonly"
   aws-personal-ro:
     level: readonly

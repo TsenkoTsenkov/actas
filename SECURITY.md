@@ -176,7 +176,7 @@ set per process.
   `terraform apply` and similar commands are denied, asked about or allowed.
 - An audit log, `~/.local/state/ccenv/audit.jsonl` (mode 0600, append mode),
   records `run`, `exec`, logins, `sync`, `aws-handoff`, secret writes, every
-  refusal, and secret reads by agents: names, the command's first word and an
+  refusal, declined confirmations, and secret reads by agents: names, the command's first word and an
   argv hash, never values. Read it with
   `tail -n 50 ~/.local/state/ccenv/audit.jsonl`. Same-user code can edit it.
 
@@ -286,8 +286,9 @@ these locations, except the fixed copy of the session records.
       or VM.
 
 **Cloud sessions**
-- [ ] Keep `aws-handoff` roles narrow and `--duration` short. Prefer SSO
-      profiles over static IAM keys.
+- [ ] Keep `aws-handoff` roles narrow; for SSO, keep the role's session
+      duration short (`--duration` applies only to static IAM keys). Prefer
+      SSO profiles over static IAM keys.
 
 ## Not yet verified
 

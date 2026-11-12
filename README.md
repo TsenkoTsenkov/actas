@@ -1,5 +1,9 @@
 # ccenv
 
+[![test](https://github.com/TsenkoTsenkov/ccenv/actions/workflows/test.yml/badge.svg)](https://github.com/TsenkoTsenkov/ccenv/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
+
 **Credential context env: the right accounts for every project, in every terminal and agent.**
 
 You work for several clients, on personal projects and on open source. Each
@@ -9,6 +13,13 @@ git identity, and its own tokens. ccenv keeps all of that in one manifest. It
 picks the profile from the directory you are in and applies it to **one
 process**: Claude Code, Codex, Gemini CLI, `terraform`, `aws`, or any other
 command.
+
+[![ccenv demo: one manifest of profiles and roles; two terminals side by side as different accounts; an agent refused a more powerful profile; the human approving it in their own terminal](docs/demo/ccenv-demo.gif)](docs/demo/ccenv-demo.mp4)
+
+_One manifest, two terminals running as two different accounts at once, any
+agent or CLI, `status --why`, and an agent that is refused a more powerful
+profile until you approve it in your own terminal. Dummy data, about 80
+seconds; click it for the sharper [MP4 version](docs/demo/ccenv-demo.mp4) · [how the demo is made](docs/demo/README.md)_
 
 ```console
 $ cd ~/code/client-a/api
@@ -35,36 +46,107 @@ $ ccenv run -t codex                              # another agent, same identity
 - **One file, standard library only.** A single Python 3.9+ script. Runs on
   macOS and Linux, and on Windows through WSL.
 
-## Contents
+> [!NOTE]
+> ccenv 2.0 is in beta: `main` is `2.0.0b1` and no release is tagged yet, so
+> install from git (below). v1 manifests keep working unchanged; see
+> [Upgrading from v1](#upgrading-from-v1).
 
-- [Quick start](#quick-start)
-- [The four rules](#the-four-rules)
-- [Common setups](#common-setups)
-- [Roles, levels and permission sets](#roles-levels-and-permission-sets)
-- [What ccenv supports](#what-ccenv-supports)
-- [Where it works](#where-it-works)
-- [AI agents](#ai-agents)
-- [Install](#install)
-- [Commands](#commands)
-- [Manifest reference](#manifest-reference)
-- [Security](#security)
-- [Upgrading from v1](#upgrading-from-v1)
-- [Development](#development)
+[Install](#install) · [Quick start](#quick-start) · [Common setups](#common-setups) · [Roles and levels](#roles-levels-and-permission-sets) · [AI agents](#ai-agents) · [Where it works](#where-it-works) · [How it compares](#how-it-compares) · [Docs](#documentation) · [Upgrading from v1](#upgrading-from-v1)
+
+## Install
+
+ccenv is a single Python 3.9+ file. Until the first 2.0 release is tagged,
+install it from git with uv or pipx. This install includes PyYAML, so YAML
+manifests work out of the box.
+
+```bash
+uv tool install git+https://github.com/TsenkoTsenkov/ccenv
+pipx install git+https://github.com/TsenkoTsenkov/ccenv
+```
+
+Update with `uv tool upgrade ccenv` (or `pipx upgrade ccenv`). Remove with
+`uv tool uninstall ccenv`. Your configuration in `~/.config/ccenv` is left
+alone.
+
+**A git checkout with a symlink.** Update with `git pull`.
+
+```bash
+git clone https://github.com/TsenkoTsenkov/ccenv ~/.local/share/ccenv
+mkdir -p ~/.local/bin
+ln -s ~/.local/share/ccenv/bin/ccenv ~/.local/bin/ccenv    # any directory on your PATH
+```
+
+ccenv is not on PyPI or Homebrew; use one of the methods above.
+
+<details>
+<summary>install.sh (once a release is tagged)</summary>
+
+It downloads the single-file release, checks its SHA-256 and installs it as
+`~/.local/bin/ccenv`. It never uses sudo, and it refuses to write through a
+symlink. No release is tagged yet, so this does not work today.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/TsenkoTsenkov/ccenv/main/install.sh
+sh install.sh --version v2.0.0b1        # a prerelease is installed only by name
+```
+
+Without `--version` it installs the latest stable release. Run the
+`gh attestation verify` command it prints to check that the file was built by
+this repository's release workflow.
+
+</details>
+
+<details>
+<summary>Optional tools</summary>
+
+You need Python 3.9 or later. On macOS, `python3` comes with the Xcode
+Command Line Tools; Linux distributions ship it. Everything else is optional:
+
+| Tool | Needed for |
+|---|---|
+| PyYAML or `yq` (mikefarah/yq, or Debian/Ubuntu's `yq` package) | a YAML manifest. The uv/pipx install includes PyYAML. Otherwise use `brew install yq` (macOS), `sudo apt install python3-yaml` or `yq` (Debian/Ubuntu), or `python3 -m pip install --user pyyaml` where pip allows it. Without a parser, write the manifest as JSON; `ccenv doctor` says which parser is missing. |
+| [Claude Code](https://code.claude.com), `codex`, `gemini` | `ccenv run` with that tool |
+| `aws`, `gcloud`, `az`, `gh` | that module's logins and probes |
+| `sops` + `age` | `sops:` secrets |
+| `op` | `op://` secrets |
+
+</details>
+
+<details>
+<summary>Setting up sops + age</summary>
+
+For `sops:` secrets (optional; `keychain:`, `op://` and `gh:` refs do not
+need it):
+
+```bash
+brew install sops age                     # or your package manager
+mkdir -p ~/.config/sops/age
+age-keygen -o ~/.config/sops/age/keys.txt && chmod 600 ~/.config/sops/age/keys.txt
+ccenv init                                # writes ~/.config/ccenv/.sops.yaml for that key
+ccenv secret set sops:client-a/token      # prompted
+```
+
+</details>
+
+Your configuration lives in `~/.config/ccenv` (`CCENV_ROOT`), separate from
+this repository. Keep it private.
 
 ## Quick start
 
-This takes about a minute once ccenv is [installed](#install).
+This takes about a minute.
 
 **1. Create the config directory.** `ccenv init` writes a short, commented
 version 2 starter to `~/.config/ccenv/environments.yaml`. It never overwrites
-an existing file, and it works without sops. Without a YAML parser (see the
-note after step 4) the starter is written as JSON.
+an existing file, and it works without sops. It writes YAML when PyYAML or
+`yq` is available (the uv/pipx install includes PyYAML) and JSON otherwise.
 
 ```bash
 ccenv init
 ```
 
-**2. Describe your contexts.** Replace the starter with something like this:
+**2. Describe your contexts.** Replace the starter with something like this
+(if `init` wrote JSON, install a YAML parser first, see [Install](#install),
+or write the same structure as JSON):
 
 ```yaml
 version: 2
@@ -107,29 +189,6 @@ cd ~/code/client-a && ccenv run       # Claude Code as client-a
 
 `ccenv status --why` shows where each value comes from. `ccenv list` shows
 every profile.
-
-> The manifest is YAML when PyYAML or `yq` (mikefarah's, or the Python `yq`
-> that Debian and Ubuntu ship) is installed. Without either, write the same
-> file as JSON: `ccenv init` then writes a JSON starter, and `ccenv doctor`
-> says which parser is missing. ccenv itself needs nothing but Python.
-
-## The four rules
-
-Everything in the manifest follows four rules:
-
-1. **Later layers win, maps merge.** A profile's own keys override what it
-   `use:`s, key by key. Restriction lists such as `permissions.deny` and
-   `unset` are combined, never dropped.
-2. **`null` means off: the tool sees no account.** `aws: null` points the AWS
-   CLI at an empty config, so it cannot fall back to your `[default]` profile.
-   `"inherit"` passes your shell's values through instead.
-3. **Compose upward.** A profile is at least as privileged as anything it
-   uses. A profile that declares `level: readonly` but uses a `power` role is
-   an error.
-4. **A secret is always `scheme:path`.** For example `sops:client-a/token`,
-   `keychain:ccenv/gw`, `op://vault/item/field`, `gh:ada-personal` or
-   `cmd:["pass", "show", "x"]`. A bare value where a secret is expected is an
-   error.
 
 ## Common setups
 
@@ -243,8 +302,28 @@ rules.
 plan mode: local edits are allowed. `permissions.builtin: false` turns the
 built-in rules off for a profile; your own `deny`/`ask` lists still apply.
 
-Full schema, merge rules and every key: [docs/manifest.md](docs/manifest.md).
-A complete example: [examples/environments.yaml](examples/environments.yaml).
+**The four rules.** Everything in the manifest follows them:
+
+1. **Later layers win, maps merge.** A profile's own keys override what it
+   `use:`s, key by key (a layer is `defaults`, a role you `use:`, or the
+   profile itself). Restriction lists such as `permissions.deny` and `unset`
+   are combined, never dropped.
+2. **`null` means off: the tool sees no account.** `aws: null` points the AWS
+   CLI at an empty config, so it cannot fall back to your `[default]` profile.
+   `"inherit"` passes your shell's values through instead.
+3. **Compose upward.** A profile is at least as privileged as anything it
+   uses. A profile that declares `level: readonly` but uses a `power` role is
+   an error.
+4. **A secret is always `scheme:path`.** For example `sops:client-a/token`,
+   `keychain:ccenv/gw`, `op://vault/item/field`, `gh:ada-personal` or
+   `cmd:["pass", "show", "x"]`. A bare value where a secret is expected is an
+   error.
+
+A manifest has five top-level keys: `version: 2`, `profiles`, `roles`,
+`defaults` and `fallback`; unknown keys get a "did you mean" warning. Full
+schema, merge rules and every key: [docs/manifest.md](docs/manifest.md).
+Complete examples: [examples/environments.yaml](examples/environments.yaml)
+and [examples/minimal.yaml](examples/minimal.yaml) (the quick-start manifest).
 
 ## What ccenv supports
 
@@ -281,7 +360,7 @@ not yet verified against the real tools.
 
 | Ref | Backend | `ccenv secret set` |
 |---|---|---|
-| `sops:<group>/<key>` | `~/.config/ccenv/secrets.enc.yaml`, encrypted with [sops](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age), decrypted once per launch | yes (value on stdin, never in argv) |
+| `sops:<group>/<key>` | `~/.config/ccenv/secrets.enc.yaml`, encrypted with [sops](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age), decrypted once per launch | yes (prompted or piped; passed to sops on stdin when it supports `--value-stdin`, see [secret references](docs/manifest.md#secret-references)) |
 | `keychain:<service>/<account>` | the macOS Keychain | yes (`security` prompts for the value) |
 | `op://vault/item/field` | the 1Password CLI (`op read`) | no, use `op` |
 | `gh:<login>[@host]` | the token `gh` stores for that account | no, use `gh auth login` |
@@ -293,18 +372,16 @@ variable stays unset and the launch goes ahead.
 ## Where it works
 
 Claude Code can start in several ways, and they do not all read the same
-configuration. ccenv covers each one as far as the app allows. The full guide
-is [docs/desktop.md](docs/desktop.md).
+configuration. The full matrix is in
+[docs/desktop.md](docs/desktop.md#at-a-glance).
 
-| Surface | How | Limits |
+| Surface | How | What it does not get |
 |---|---|---|
-| Terminal | `ccenv run` (Claude, Codex, Gemini) or `ccenv exec` (anything) | None: everything applies. |
-| Bare `claude`, IDE extensions | `ccenv sync` writes `.claude/settings.local.json` at each matching repo's git root (for a matched folder that is not a repo: the folder and each git repo up to two levels below it): non-secret env, provider, `apiKeyHelper`, permission rules and the SessionStart note | No `secret_env` and no `claude.home`. A nested profile inside another profile's repo is skipped (use `ccenv run` there). `confirm` profiles are not synced. |
-| VS Code extension login check | `ccenv desktop <p> --vscode` prints `claudeCode.environmentVariables` | Whether `apiKeyHelper` satisfies that check is not yet verified. |
-| Claude Desktop (local Code sessions) | Synced settings files, plus `ccenv desktop <p> --print-3p` for the app-wide gateway setup (Developer → Configure Third-Party Inference) | One claude.ai account per app. The provider applies to the whole app, not per project. Desktop ignores `apiKeyHelper` and `ANTHROPIC_*` credentials. Whether it runs the SessionStart hook is not yet verified. |
-| Cloud sessions, Remote Control | Subscription profiles only. For AWS, run `ccenv aws-handoff` in your terminal and paste the short-lived credentials | Remote Control is off with a gateway, an API key or a cloud provider (`ccenv list` shows `remote=`). |
-| Other GUI apps (Cursor, JetBrains, …) | `ccenv exec <p> -- /Applications/X.app/Contents/MacOS/X`, or paste `ccenv shell <p> --format env` into the app's env setting | Apps started from the Dock or Finder do not inherit your shell. `--format env` has no secrets: for a gateway profile Claude gets the URL without the token (use `run`, or `sync` in the repo). |
-| Shells, direnv | `eval "$(ccenv shell)"`, `--format fish`, or `use ccenv` with [contrib/direnvrc](contrib/direnvrc) | direnv gets non-secret values only; `gh` there uses its own keyring login (no token). |
+| Terminal | `ccenv run` (Claude, Codex, Gemini) or `ccenv exec` (anything) | Nothing: everything applies. |
+| Bare `claude`, IDE extensions, Claude Desktop (local sessions) | `ccenv sync` writes `.claude/settings.local.json` in each matching repo; `ccenv desktop <p> --print-3p` / `--vscode` print the app-wide gateway and VS Code blocks | `secret_env` values; with `github.auth`, a GitHub token (`gh` is logged out there; HTTPS `git push` still works through the helper); `claude.home`; `confirm` profiles unless `--include-confirm`. Desktop has one claude.ai account and one provider for the whole app. |
+| Remote Control | as the local session it drives (`ccenv run` or `sync`) | Gateway, API-key, Bedrock and Vertex profiles (`ccenv list` shows `remote=`). |
+| Cloud sessions (claude.ai/code) | Subscription only. For AWS, run `ccenv aws-handoff` in your terminal and paste the short-lived credentials | Local files, gateways, API keys, Bedrock/Vertex. |
+| Other GUI apps, shells, direnv | `ccenv exec <p> -- <app binary>`, `eval "$(ccenv shell)"`, or `use ccenv` with [contrib/direnvrc](contrib/direnvrc) | `--format env` and direnv get non-secret values only. Under direnv, git over HTTPS uses the profile's account, but `gh` acts as whichever account is active in gh's keyring; use `ccenv exec` or `github.home` for a per-profile `gh`. |
 
 ## AI agents
 
@@ -321,9 +398,9 @@ Credentials follow the **session**, not the directory. An agent started by
 - Every refusal starts with a `ccenv-stop:` line and includes a ready-to-run
   command. You run it yourself in a separate terminal. There is no in-session
   approval and no bypass variable.
-- Logins, `sync`, `init`, writing secrets and `shell` with secrets are
-  human-only. Runs, execs, logins and refusals are logged to
-  `~/.local/state/ccenv/audit.jsonl` (names, never values).
+- Logins, `sync`, `init`, `aws-handoff`, `migrate --write`, writing secrets
+  and `shell` with secrets are human-only. Runs, execs, logins and refusals
+  are logged to `~/.local/state/ccenv/audit.jsonl` (names, never values).
 
 ```text
 ccenv-stop: code=needs_user reason=confirm profile=personal-power
@@ -337,8 +414,12 @@ If you agree, run it yourself in a separate terminal (not inside the agent sessi
 
 To teach an agent the rules, run `ccenv instructions` and add the output to
 your project's `AGENTS.md` (for Claude Code, also add `@AGENTS.md` to
-`CLAUDE.md`). [skills/](skills/) has Claude Code skills for checking identity
-and for the AWS handoff.
+`CLAUDE.md`).
+
+**Agent skills.** [skills/ccenv](skills/ccenv/SKILL.md) teaches Claude Code to
+check its identity before cloud or GitHub commands (copy it to
+`~/.claude/skills/ccenv`). [skills/aws-handoff](skills/aws-handoff/SKILL.md)
+is a `/aws-handoff` command for cloud sessions.
 
 **These guardrails are a seatbelt, not a boundary.** They stop a confused or
 prompt-injected agent that follows its instructions. They do not stop code
@@ -348,73 +429,27 @@ ReadOnlyAccess role. [docs/agents.md](docs/agents.md) covers the threat model,
 the full gate rules and stronger options. If you are an agent working on this
 repository, read [AGENTS.md](AGENTS.md).
 
-## Install
+If you point ccenv at another config with `CCENV_ROOT` or `CCENV_STATE`, set
+them per command rather than exporting them: exported to a non-default place,
+they make agents without a `ccenv run` session refuse every `ccenv exec` with
+`reason=override` ([details](docs/agents.md#the-gate)).
 
-You need Python 3.9 or later; macOS and Linux ship it. Everything else is
-optional:
+## How it compares
 
-| Tool | Needed for |
-|---|---|
-| PyYAML or `yq` (mikefarah/yq, or Debian/Ubuntu's `yq` package) | a YAML manifest (otherwise write it as JSON; `python3 -m pip install --user pyyaml` or `brew install yq`) |
-| [Claude Code](https://code.claude.com), `codex`, `gemini` | `ccenv run` with that tool |
-| `aws`, `gcloud`, `az`, `gh` | that module's logins and probes |
-| `sops` + `age` | `sops:` secrets |
-| `op` | `op://` secrets |
+| You may already use | What it does | What ccenv adds |
+|---|---|---|
+| direnv, mise `[env]` | per-directory variables in your interactive shell | one identity per process (two terminals, two accounts), secret refs resolved at launch, agent rules. They combine: `use ccenv` in `.envrc` |
+| cc-switch, claude-switch and other Claude account switchers | switch which provider or account Claude Code (and often Codex or Gemini CLI) uses | the same switch for the cloud accounts, GitHub, git identity and secrets of that context, per process, with rules that stop an agent from switching itself up |
+| aws-vault, granted | AWS credentials | the same idea for the LLM provider, GitHub, git, GCP and Azure. Set `aws.profile` to an AWS profile whose `credential_process` uses them |
+| `gh auth switch`, `gcloud config set`, `az account set` | switch the account for every terminal at once | per-process accounts; nothing global changes |
+| 1Password shell plugins, fnox, sops | supply secrets | which secrets belong to which context; ccenv reads them through `op://`, `cmd:` and `sops:` refs |
 
-**install.sh** downloads the single-file release, checks its SHA-256 and
-installs it as `~/.local/bin/ccenv`. It never uses sudo, and it refuses to
-write through a symlink.
-
-```bash
-curl -fsSLO https://raw.githubusercontent.com/TsenkoTsenkov/ccenv/main/install.sh
-sh install.sh                     # or: sh install.sh --version v2.0.0
-```
-
-The default installs the latest stable release. A prerelease (a tag such as
-`v2.0.0b1`) is installed only by name: `sh install.sh --version v2.0.0b1`.
-
-The checksum catches a broken download. To check that the file was built by
-this repository's release workflow, run the
-`gh attestation verify` command the installer prints at the end.
-
-**uv or pipx**, from git. This install includes PyYAML.
-
-```bash
-uv tool install git+https://github.com/TsenkoTsenkov/ccenv
-pipx install git+https://github.com/TsenkoTsenkov/ccenv
-```
-
-**A git checkout with a symlink.** Update with `git pull`.
-
-```bash
-git clone https://github.com/TsenkoTsenkov/ccenv ~/.local/share/ccenv
-mkdir -p ~/.local/bin
-ln -s ~/.local/share/ccenv/bin/ccenv ~/.local/bin/ccenv    # any directory on your PATH
-```
-
-ccenv is a tool, not a library, and it needs only Python, so there are no
-npm, cargo or gem packages.
-
-**For `sops:` secrets** (optional; `keychain:`, `op://` and `gh:` refs do not
-need it):
-
-```bash
-brew install sops age                     # or your package manager
-mkdir -p ~/.config/sops/age
-age-keygen -o ~/.config/sops/age/keys.txt && chmod 600 ~/.config/sops/age/keys.txt
-ccenv init                                # writes ~/.config/ccenv/.sops.yaml for that key
-ccenv secret set sops:client-a/token      # prompted
-```
-
-Your configuration lives in `~/.config/ccenv` (override with `CCENV_ROOT`).
-It is separate from this repository. Keep it private, or in a private repo of
-its own. If you export `CCENV_ROOT` or `CCENV_STATE` in your shell profile
-pointing somewhere other than the default, agents without a `ccenv run`
-session (bare `claude`, the IDE extension, Desktop) are refused every
-`ccenv exec` with `reason=override`, because an agent could set the same
-variable to load another manifest. Start those agents with `ccenv run` (its
-session record remembers the paths), or set the variables per command
-([docs/agents.md](docs/agents.md#the-gate)).
+**When ccenv is not the right tool:** you need an enforced sandbox around an
+untrusted agent (the agent rules are a seatbelt; use a
+[devcontainer or VM](docs/recipes.md#stronger-isolation-devcontainer-or-vm),
+with ccenv inside if you like), you use one account everywhere, or you are on
+native Windows (WSL only). Using them together:
+[docs/recipes.md](docs/recipes.md#direnv-mise-and-aws-credential-tools).
 
 ## Commands
 
@@ -435,7 +470,7 @@ the launched tool: `ccenv run client-a -- --resume`.
 | `ccenv status [profile] [--why] [--probe] [--json]` | Which profile applies and what it sets. `--why`: the `use:` chain and where each value comes from. `--probe`: check each login. Alias: `whoami`. |
 | `ccenv list [--check] [--json]` | All profiles and roles. `--check` also probes AWS and gateway secrets. |
 | `ccenv login [profile] [--module M] [--all]` | Log in: AWS SSO by default (plus Codex for Codex profiles). `--module gcp\|azure\|github\|codex` (for a `gh:` account, gh's previously active account is switched back afterwards). `--all`: one AWS login per SSO session or portal. |
-| `ccenv sync [profile] [--dry-run] [--clean [--force]]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what ccenv wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing). |
+| `ccenv sync [profile] [--dry-run] [--clean [--force]] [--include-confirm]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what ccenv wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing). `--include-confirm` also writes `confirm` profiles. |
 | `ccenv doctor [--strict] [--json] [--fix]` | Check tools, the manifest, file modes, and the shell exports `run` would clear. `--fix` only tightens ccenv's own directories to 0700. |
 
 **Advanced**
@@ -445,7 +480,7 @@ the launched tool: `ccenv run client-a -- --resume`.
 | `ccenv shell [profile] [--format sh\|fish\|direnv\|json\|env] [--no-secrets]` | Print the environment, for `eval "$(ccenv shell)"`, direnv or a GUI app. |
 | `ccenv secret set REF` / `ccenv secret --ref REF` | Store a secret (prompted, or from stdin), or print one (helpers use this). |
 | `ccenv desktop [profile] [--print-3p] [--vscode]` | What reaches Claude Desktop and IDEs, plus blocks to paste there. |
-| `ccenv instructions [--agent claude\|codex\|gemini] [--direnv]` | Print the agent rules, or the direnv function. |
+| `ccenv instructions [--agent claude\|codex\|gemini\|generic] [--direnv]` | Print the agent rules, or the direnv function. |
 | `ccenv migrate [--write]` | Print a v1 manifest as version 2. `--write` replaces it and keeps the old file. |
 | `ccenv aws-handoff [profile] [--stdout] [--login]` | Copy short-lived AWS credentials for a cloud session. |
 
@@ -453,42 +488,19 @@ Exit codes: `0` ok, `1` error, `2` usage, `3` needs the user (a `ccenv-stop:`
 refusal), `4` credentials expired. Apart from these, `exec` and `run` return
 the tool's own exit code.
 
-## Manifest reference
+## Documentation
 
-`~/.config/ccenv/environments.yaml` has five top-level keys: `version: 2`,
-`profiles`, `roles`, `defaults` (the first layer of every profile) and
-`fallback` (the profile used when no directory matches). A profile or role
-body takes these keys:
-
-| Key | Meaning |
-|---|---|
-| `match` | Directories or globs (profiles only, not inherited). The longest match wins. |
-| `use` | Roles or profiles to layer underneath, in order. |
-| `level`, `confirm` | Privilege level and typed confirmation (see above). |
-| `agents_may_use` | Profiles an agent in this profile's session may `exec` (same or lower level). |
-| `tool` | `claude` (default), `codex` or `gemini`: what `run` launches. |
-| `aws`, `gcp`, `azure`, `github`, `git` | Modules: a map, `null` (off and isolated) or `"inherit"`. |
-| `claude`, `codex`, `gemini` | Tool settings: provider, home, models, args, raw Claude `settings`. |
-| `env`, `secret_env` | Plain variables, and variables resolved from secret refs. `null` unsets one. |
-| `permissions` | `deny`/`ask` lists of Claude rules; `builtin: false` drops the level's rules. |
-| `inherit`, `unset` | Variables to keep from your shell, or to always remove. |
-| `description` | Shown by `list` and `status`. |
-
-Unknown keys produce a warning with a "did you mean" suggestion.
-[docs/manifest.md](docs/manifest.md) is the full reference.
-
-**Files.** Apart from the settings that `sync` writes, ccenv keeps everything
-outside your projects:
-
-| Path | Contents |
-|---|---|
-| `~/.config/ccenv/` (`CCENV_ROOT`) | `environments.yaml`, `secrets.enc.yaml`, `.sops.yaml` |
-| `~/.local/state/ccenv/` (`CCENV_STATE`) | per-account homes (`homes/<tool>/<name>`), the sync ledger, session records, `audit.jsonl`. Session records are also kept under your passwd home's `~/.local/state/ccenv/sessions/`, which no variable moves |
-| `~/.cache/ccenv/` | generated Claude settings (no secrets, mode 0600, pruned after 7 days) |
+- [docs/manifest.md](docs/manifest.md): every key, merge rules, modules, secret references, validation, and the files ccenv uses
+- [docs/recipes.md](docs/recipes.md): GitLab, npm, Docker, Kubernetes, Terraform Cloud, Vault, other agents, direnv and mise, written as roles
+- [docs/agents.md](docs/agents.md): levels and rules, the gate, refusals, the audit log, the threat model
+- [docs/desktop.md](docs/desktop.md): bare `claude`, IDE extensions, Claude Desktop, cloud sessions, Cursor and other GUI apps
+- [docs/migration.md](docs/migration.md): moving a v1 manifest to version 2, with rollback
+- [examples/](examples/): complete manifests; [skills/](skills/): Claude Code skills
+- [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md), and [AGENTS.md](AGENTS.md) for agents working on this repository
 
 ## Security
 
-- **Credentials are the boundary; agent rules are a seatbelt.** Give each
+- **Credentials are the boundary** (see [AI agents](#ai-agents)). Give each
   profile the narrowest credentials that work, such as a fine-grained
   read-only PAT or a ReadOnlyAccess role. A separate SSO start URL or MFA for
   power roles makes the split real.
@@ -521,21 +533,23 @@ or changes `secrets.enc.yaml`. The step-by-step guide, with rollback, is
 [docs/migration.md](docs/migration.md). [CHANGELOG.md](CHANGELOG.md) lists
 every behaviour change.
 
-## Development
+## Contributing
+
+Issues and pull requests are welcome. The tests use only the standard library
+and never touch a real login:
 
 ```bash
 python3 -m unittest discover -s tests -v
 uv run --no-project --python 3.9 python -m unittest discover -s tests    # oldest supported Python
 ```
 
-The tests use only the standard library. Each test gets its own temporary
-`HOME`, `CCENV_ROOT`, `CCENV_STATE` and XDG directories, and `PATH` points at
-fake `gh`, `aws`, `sops`, `security`, `op`, `gcloud`, `az`, `claude`, `codex`
-and `gemini` binaries, so no test touches a real login. CI runs on Ubuntu and
+Each test gets its own temporary `HOME`, `CCENV_ROOT`, `CCENV_STATE` and XDG
+directories, and `PATH` points at fake `gh`, `aws`, `sops`, `security`, `op`,
+`gcloud`, `az`, `claude`, `codex` and `gemini` binaries. CI runs on Ubuntu and
 macOS with Python 3.10 and 3.13, plus Python 3.9 through uv, and builds the
-package. Contributor notes are in
-[AGENTS.md](AGENTS.md): the tables-first design, placeholder names only,
-Python 3.9 compatibility, and a single source for the agent rules.
+package. Conventions (tables-first design, placeholder names only, Python 3.9
+compatibility, one source for the agent rules) are in [AGENTS.md](AGENTS.md),
+written for coding agents but meant for every contributor.
 
 ## License
 

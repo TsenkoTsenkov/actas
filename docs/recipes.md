@@ -27,8 +27,11 @@ What a recipe can use (details in [manifest.md](manifest.md)):
 
 Two things to know:
 
-- ccenv only clears the variables its own modules own. A `GITLAB_TOKEN` or `NPM_TOKEN` exported in
-  your shell reaches every session unless the profile sets it or lists it in `unset:`.
+- ccenv clears the variables its modules own, plus every variable any profile or role names in
+  `secret_env` (so a role's `NPM_TOKEN` never leaks into another profile's session; keep it with
+  `inherit: [NPM_TOKEN]`). Variables the manifest never names, such as a `GITLAB_TOKEN` exported
+  in your shell profile, reach every session unless the profile sets them or lists them in
+  `unset:` ([details](manifest.md#the-process-environment)).
 - Secrets in `secret_env` are in the process environment, so an agent can read them with `env`.
   Prefer short-lived or narrowly scoped tokens, and see
   [Claude Code extras](#claude-code-extras) for `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`.
@@ -71,7 +74,8 @@ roles:
 - Prefer a separate glab login over a token? Point glab at its own config directory instead:
   `env: { GLAB_CONFIG_DIR: /home/ada/.config/glab-client-c }` (absolute path), then run
   `ccenv exec <profile> -- glab auth login` once.
-- The built-in `push` agent rules already cover `glab mr merge`.
+- The built-in push rules already cover `glab mr merge` (deny in readonly, ask in standard, no
+  rule in power; see [levels](manifest.md#levels)).
 
 ### Bitbucket Cloud
 
@@ -122,7 +126,9 @@ For GitHub Enterprise Server, use the built-in module: `github: { auth: "gh:ada@
 ```yaml
 roles:
   npm-client-a:
-    secret_env: { NPM_TOKEN: "sops:client-a/npm" }
+    secret_env:
+      NPM_TOKEN: "sops:client-a/npm"                          # registry.npmjs.org
+      GITHUB_PACKAGES_TOKEN: "sops:client-a/github_packages"  # npm.pkg.github.com (read:packages)
 ```
 
 In the project's `.npmrc` (safe to commit, it holds no secret):
@@ -130,7 +136,7 @@ In the project's `.npmrc` (safe to commit, it holds no secret):
 ```ini
 //registry.npmjs.org/:_authToken=${NPM_TOKEN}
 @client-a:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${NPM_TOKEN}
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
 ### uv and pip
@@ -196,7 +202,8 @@ roles:
       HELM_KUBECONTEXT: client-a-test
 ```
 
-The built-in `deploy` rules already ask before `kubectl apply/delete` and `helm install/upgrade/uninstall`.
+The built-in deploy rules already cover `kubectl apply/delete` and `helm install/upgrade/uninstall`
+(ask in standard and power, deny in readonly; see [levels](manifest.md#levels)).
 Avoid `kubectl config use-context` in a shared kubeconfig: it changes every session using that file.
 
 ---
@@ -238,8 +245,9 @@ roles:
     env: { PULUMI_HOME: /home/ada/.pulumi-client-a }      # optional: separate plugins and logins
 ```
 
-Use `PULUMI_BACKEND_URL` for a self-managed backend. The built-in `deploy` rules ask before
-`pulumi up` and `pulumi destroy`.
+Use `PULUMI_BACKEND_URL` for a self-managed backend. The built-in deploy rules already cover
+`pulumi up` and `pulumi destroy` (ask in standard and power, deny in readonly; see
+[levels](manifest.md#levels)).
 
 ### Cloudflare (wrangler)
 
@@ -281,8 +289,9 @@ roles:
     secret_env: { SENTRY_AUTH_TOKEN: "sops:client-a/sentry" }
 ```
 
-`sentry-cli` also reads `~/.sentryclirc` and any `.sentryclirc` up the tree; a token there wins over
-nothing ccenv controls, so keep tokens out of those files.
+`sentry-cli` also reads `~/.sentryclirc` and any `.sentryclirc` up the tree. `SENTRY_AUTH_TOKEN`
+from the environment takes precedence, but a token in those files is used by every profile that
+does not set one, so keep tokens out of them.
 
 ---
 
@@ -328,8 +337,10 @@ roles:
   tool, hooks and stdio MCP servers, but leaves GitHub tokens. Use it for profiles that put
   secrets in the process environment (`secret_env`, `oauth_token`, `bearer_token`,
   `export_token`). Tools run by the agent then lack those secrets too.
-- The two gateway/beta variable names above are taken from the design notes; check Claude Code's
-  environment variable reference for the current names.
+- `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` helps when a gateway rejects `anthropic-beta`
+  headers; `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` fills `/model` from the gateway's
+  `/v1/models`. See Claude Code's
+  [environment variable reference](https://code.claude.com/docs/en/env-vars).
 
 ### Microsoft Foundry
 
@@ -363,8 +374,10 @@ roles:
     secret_env:
       # Linux Secret Service (GNOME Keyring, KeePassXC)
       NPM_TOKEN: { cmd: ["secret-tool", "lookup", "service", "ccenv", "account", "client-a-npm"] }
-      # pass / gopass: first line of the entry
+      # pass: the whole entry (one trailing newline stripped), so keep the token as its only line;
+      # gopass: `gopass show -o` prints only the password
       SENTRY_AUTH_TOKEN: { cmd: ["pass", "show", "client-a/sentry"] }
+      VAULT_TOKEN: { cmd: ["gopass", "show", "-o", "client-a/vault"] }
       # Bitwarden: needs an unlocked session (BW_SESSION in the shell you start ccenv from); use item IDs
       FLY_API_TOKEN: { cmd: ["bw", "get", "password", "00000000-0000-0000-0000-000000000000"] }
       # HashiCorp Vault KV: pass the address explicitly
@@ -425,20 +438,16 @@ Notes:
   to that key. Aider also loads `.env` files from your home, the git root and the working
   directory, which can override what ccenv sets.
 - **Agent detection.** `ccenv exec client-a -- aider` (or `copilot`, `amp`, `cursor-agent`,
-  `opencode`, `goose`, `kiro-cli`) sets `CCENV_AGENT` for the tool it starts, so `ccenv` commands
-  the agent runs are treated as agent commands. Started any other way, these tools are recognised
-  only by ancestor process name, and on macOS that works only for native binaries (`opencode`,
-  `goose`, `kiro-cli`): Aider runs as `python`/`python3`, and npm-installed Copilot CLI, Amp and
-  the `cursor-agent` wrapper run as `node`. The current Cursor binary is named `agent`, which is
-  not on the list either. For those, mark the launch yourself:
+  `opencode`, `goose`, `kiro-cli`) sets `CCENV_AGENT` for the tool it starts, so the `ccenv`
+  commands it runs are treated as agent commands. Started any other way, script-based CLIs (Aider
+  runs as `python`, npm-installed ones as `node`) and Cursor's `agent` are not recognised, so mark
+  the launch yourself, never in a profile's `env:`
+  ([why](agents.md#cursor-copilot-cli-aider-opencode-goose-amp-kiro-and-others)):
 
   ```bash
   ccenv exec client-a -- env CCENV_AGENT=cursor agent
   alias aider='CCENV_AGENT=aider aider'        # when you start it without ccenv exec
   ```
-
-  Never put `CCENV_AGENT` in a profile's `env:`: `ccenv shell` and direnv would export it into
-  your own terminal, which would then count as an agent (human-only commands refuse there).
 - `ccenv exec` does not write a session record (only `ccenv run` does). An agent started this way
   is identified by `$CCENV`: it may use its own profile and those in `agents_may_use` at the same
   or a lower level, and power profiles always need you. See [agents.md](agents.md).

@@ -32,11 +32,16 @@ Credentials here come from ccenv. They follow the session, not the directory.
 ```text
 Need cloud, GitHub, registry or deploy access?
 └─ ccenv status --json
+   ├─ session.profile is null -> this session has no ccenv profile; tell
+   │                        the user (start the agent with `ccenv run`). Only
+   │                        this directory's readonly profile works with
+   │                        `ccenv exec`.
    ├─ "mismatch": true   -> this directory is matched to another profile.
    │                        Do not run remote commands here; tell the user.
    │                        (A directory that only the fallback profile
    │                        covers is no mismatch.)
-   ├─ right profile      -> run the command normally.
+   ├─ right profile and session.profile set
+   │                     -> run the command normally.
    └─ need another profile
       └─ ccenv exec <profile> --reason "<why>" -- <one command>
          ├─ first stderr line starts with "ccenv-stop:"
@@ -47,11 +52,12 @@ ccenv not installed here (cloud session)?
 └─ ask the user to run `ccenv aws-handoff` on their machine and paste the result.
 ```
 
-`ccenv exec` with no profile uses this session's profile, never the profile
-of the current directory. Changing directory does not change your
-credentials. An explicit `--cwd <dir>` is different: it selects the profile
-of `<dir>` (for `status`, `exec` and `run`), and the gate still decides
-whether you may use it.
+`ccenv exec` with no profile uses this session's profile (never the current
+directory's). Without a session it falls back to the current directory's
+profile, which runs only if that profile is readonly. Changing directory does
+not change your credentials. An explicit `--cwd <dir>` is different: it
+selects the profile of `<dir>` (for `status`, `exec` and `run`), and the gate
+still decides whether you may use it.
 
 ### Safe, ask, never
 
@@ -63,7 +69,7 @@ whether you may use it.
 | `ccenv status --why` | The `use:` chain, where each value comes from, and how many agent rules apply (`--json` lists them) |
 | `ccenv status --probe` | Also checks each login over the network. Exits 4 with `ccenv-stop: code=expired` if one has expired. |
 | `ccenv list [--json]`, `ccenv list --check` | Profiles and roles; `--check` also probes AWS and secret availability (status only, never values) |
-| `ccenv doctor` | Tool and manifest checks |
+| `ccenv doctor` (without `--fix`) | Tool and manifest checks. `ccenv doctor --fix` changes directory modes: a human runs it. |
 | `ccenv help`, `ccenv help <cmd>`, `ccenv instructions` | Static text |
 | `ccenv desktop [profile]`, `ccenv migrate` (no `--write`) | Print setup text. Refs are names, never values. |
 
@@ -80,7 +86,7 @@ whether you may use it.
 |---|---|
 | `ccenv login`, `ccenv sync`, `ccenv init`, `ccenv aws-handoff`, `ccenv secret set`, `ccenv secret ... --set`, `ccenv migrate --write`, `ccenv shell` (with secrets) | Human-only. ccenv refuses them in agent context (`reason=human_only`). |
 | `ccenv shell`, `ccenv secret`, `git credential fill`, `sops -d`, `gh auth token`, `op read`, `security find-generic-password` | They print secrets into your transcript. |
-| Reading `~/.config/ccenv`, `~/.aws/sso`, `~/.config/gh/hosts.yml` or other credential files | Same. Claude sessions started by ccenv also have deny rules for these. |
+| Reading `~/.config/ccenv`, `~/.aws/sso`, `~/.config/gh/hosts.yml` or other credential files | Same. Claude sessions with ccenv settings (`run` or `sync`, v2 manifest) deny reading the age key, the AWS SSO/CLI caches, gh `hosts.yml` and managed-home credential files, and deny editing ccenv's config and state. |
 | `aws sso login`, `gcloud auth login`, `az login`, `gh auth login` | A human logs in, through `ccenv login`. |
 | `gh auth switch`, `az account set`, `gcloud config set`, `kubectl config use-context`, `aws configure set` | Global switches change every other session on the machine. |
 | Setting `CCENV`, `CCENV_ROOT`, `CCENV_STATE`, `XDG_STATE_HOME` or `HOME`, or `cd`-ing to get past a refusal | Circumvention, which the rules forbid. In a session started by `ccenv run` it does not work either: ccenv refuses with `reason=override` when the config or state directory changed or the session's record cannot be found. (Same-user code that forges or deletes ccenv's state files can still get around it; see SECURITY.md.) |

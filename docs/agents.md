@@ -36,15 +36,11 @@ Contents:
    `standard` (the default) or `power`.
 2. **Put `confirm: true` on anything dangerous.** Agents can never use those
    profiles, and you type the profile name to use them yourself.
-3. **List the profiles an agent may hop to** with `agents_may_use`. In a
-   session started with `ccenv run`, ccenv refuses every other profile, even
-   through a nested `ccenv run` (code that forges ccenv's state files can get
-   around this; see [Threat model](#threat-model)). Outside such a session the profile comes
-   from `$CCENV`, and an agent with no session at all may use only the
-   readonly profile of the directory it runs in. Those two rules are
-   guardrails against mistakes, not a boundary: an agent that ignores its
-   rules can set `CCENV` or `cd` elsewhere. The boundary is each profile's
-   credentials (see [Threat model](#threat-model)).
+3. **List the profiles an agent may hop to** with `agents_may_use`. ccenv
+   refuses every other profile (see [The gate](#the-gate) for sessions not
+   started by `ccenv run`). These checks are guardrails against mistakes, not
+   a boundary: the boundary is each profile's credentials (see
+   [Threat model](#threat-model)).
 4. **Start agents with `ccenv run`.** This anchors the session, so ccenv knows
    which profile the agent belongs to.
 5. **Tell the agent the rules:** `ccenv instructions >> AGENTS.md`. For
@@ -101,7 +97,7 @@ Each level renders a built-in **preset** of Claude Code permission rules:
 |---|---|---|---|---|
 | Local edits | none | allowed | allowed | allowed |
 | Push | `Bash(git push *)`, `Bash(gh pr merge *)`, `Bash(gh release *)`, `Bash(glab mr merge *)` | **deny** | ask | allowed |
-| Deploy | `terraform`/`tofu apply` and `destroy`, `kubectl apply`/`delete`, `helm install`/`upgrade`/`uninstall`, `pulumi up`/`destroy`, `cdk`/`sam deploy`, `aws * delete-*`/`put-*`/`create-*`, `gcloud * delete *`, `az * delete *` | **deny** | ask | ask |
+| Deploy | `terraform`/`tofu apply` and `destroy`, `kubectl apply`/`delete`, `helm install`/`upgrade`/`uninstall`, `pulumi up`/`destroy`, `cdk deploy`/`destroy`, `sam deploy`, `aws * delete-*`/`put-*`/`create-*`, `gcloud * delete *`, `az * delete *` | **deny** | ask | ask |
 | Secrets | `ccenv secret`/`shell`/`aws-handoff`/`git-credential`, `git credential`, `sops`, `gh auth token`, `aws configure export-credentials`, `security find-generic-password`, `op read`; `Edit` of the ccenv config and state dirs; `Read` of the age key and of credential files (below) | **deny** | **deny** | **deny** |
 | Switch | `ccenv exec`, `ccenv run`, `ccenv login`, `ccenv sync` | ask | ask | ask |
 
@@ -170,7 +166,7 @@ profiles:
 
 | Key | Where | Meaning |
 |---|---|---|
-| `confirm: true` | any layer (OR'd through `use:`) | A human must type the profile name to use it. Agents are **always** refused, even when it is their own session profile. `ccenv sync` skips these profiles. |
+| `confirm: true` | any profile or role, not `defaults` (OR'd through `use:`) | A human must type the profile name to use it. Agents are **always** refused, even when it is their own session profile. `ccenv sync` skips these profiles. |
 | `agents_may_use: [names]` | profiles only, not inherited | Profiles an agent in a session of this profile may `ccenv exec` without you, if they are at the **same or a lower level** and have no `confirm`. Hops do not chain: when an agent starts a nested `ccenv run T`, the new session keeps the outer session's list (stored in its record as `allowed`), not T's. |
 
 Hops sideways also need `agents_may_use`. Without it, an agent in
@@ -186,7 +182,8 @@ Hops sideways also need `agents_may_use`. Without it, an agent in
 
 **"Always read-only, power on demand":** keep the power role out of the
 everyday profile. Make a separate profile with `confirm: true`, and use it
-only when you need it: `ccenv exec personal-power -- <cmd>`.
+only when you need it: `ccenv exec personal-power -- <cmd>`. The full recipe
+is [read-only by default, power on demand](recipes.md#read-only-by-default-power-on-demand).
 
 ---
 
@@ -216,9 +213,11 @@ terms first:
     not trust `$CCENV` for agents (S is none).
   - **S never comes from the current directory.**
 - **Target (T):** the profile named on the command line, or the profile of
-  an explicit `--cwd DIR`. Without either, an agent's default is S and a
-  human's default is the profile matching the current directory. An explicit
-  target is always gated; it never silently falls back to S.
+  an explicit `--cwd DIR`. Without either, an agent's default is S, or the
+  cwd's profile when there is no S (which then runs only if it is
+  readonly), and a human's default is the profile matching the current
+  directory. An explicit target is always gated; it never silently falls
+  back to S.
 
 **Agent context.** The rows are checked in order and the first match wins.
 Nothing in this branch ever prompts.
@@ -273,7 +272,9 @@ What this means in practice:
 - `shell` with secrets
 
 `shell --no-secrets`, `shell --format json` and `shell --format env` print no
-secrets and are allowed.
+secrets, and ccenv allows them in agent context. Claude Code sessions with
+ccenv rules still deny every `ccenv shell` call, and rule 7 tells agents not
+to use it: these forms are meant for direnv and GUI-app setup.
 
 **`!` commands count as agent context.** A command you type with `!` inside
 Claude Code runs in Claude's Bash tool, with `CLAUDECODE` set. Run elevated
@@ -383,9 +384,11 @@ confused or prompt-injected, or one that retries naively:
 **Secret reads through the helpers are not refused.** `ccenv secret ENV KEY`,
 `ccenv secret --ref <ref>` and `ccenv git-credential` are the helpers that
 Claude's `apiKeyHelper` and git call, so they print any ref's value in agent
-context too. They are audit-logged (`secret-read`), and rule 7 forbids them.
-For Claude Code, v2 manifests also render Bash deny rules for them; v1
-manifests, Codex, Gemini and other `exec`-launched agents have no such rule.
+context too. They are audit-logged (`secret-read`), and
+[rule 7](../AGENTS.md#credentials-ccenv) forbids `ccenv secret` and
+`git credential`. For Claude Code, v2 manifests also render Bash deny rules
+for all three helpers unless `permissions.builtin: false`; v1 manifests,
+Codex, Gemini and other `exec`-launched agents have no such rule.
 
 **What ccenv does not stop:** code running as your user that is determined to
 get around it. Such code can:
@@ -426,19 +429,20 @@ subprocesses, but leaves GitHub tokens.
 
 **Real boundaries, strongest last:**
 
-1. **Narrow credentials** (Tier A, today):
+1. **Narrow credentials:**
    - read-only fine-grained GitHub PATs for readonly profiles
    - AWS `ReadOnlyAccess`, GCP viewer and Azure Reader for readonly profiles
    - short-lived tokens wherever possible
-2. **Make power need a human outside the agent** (Tier C recipes; no ccenv
-   code):
+2. **Make power need a human outside the agent** (see
+   [read-only by default, power on demand](recipes.md#read-only-by-default-power-on-demand)
+   and the [hardening checklist](../SECURITY.md#hardening-checklist)):
    - a separate AWS SSO start URL, or `mfa_serial`, for elevated roles
    - Azure PIM activation
    - power-profile secrets encrypted only to an `age-plugin-se` (Touch ID)
      identity
-3. **Isolate the agent:** a devcontainer or VM that holds only the
-   credentials it needs. A built-in sandbox mode (Tier B) is planned for a
-   later release and does not exist yet.
+3. **Isolate the agent:** a [devcontainer or VM](recipes.md#stronger-isolation-devcontainer-or-vm)
+   that holds only the credentials it needs. ccenv has no built-in sandbox
+   mode.
 
 ---
 
@@ -449,7 +453,8 @@ subprocesses, but leaves GitHub tokens.
 | Claude Code CLI via `ccenv run` | yes (`--settings`) | yes | `AGENTS.md` + `@AGENTS.md` in `CLAUDE.md`, or the skill; a SessionStart note is added automatically |
 | Bare `claude` or the IDE extension in a synced repo | yes (`settings.local.json`) | no (`$CCENV` from synced settings) | same |
 | Claude Desktop, local Code sessions | yes (same settings files) | no | same |
-| Claude Code cloud sessions, Remote Control | no (no local files) | no | the agent has no ccenv; rule 8 and the `aws-handoff` skill |
+| Claude Code cloud sessions | no | no | no ccenv; [rule 8](../AGENTS.md#credentials-ccenv) and `/aws-handoff` |
+| Remote Control | as the local session it drives (`ccenv run`: `--settings`; synced: `settings.local.json`) | as that session | same as that session; subscription profiles only |
 | Codex via `ccenv run -t codex` | no (use Codex's own settings) | yes | `AGENTS.md` (Codex reads it natively) |
 | Gemini CLI via `ccenv run -t gemini` | `--approval-mode` only | yes | `AGENTS.md` with `context.fileName` |
 | Cursor, Copilot CLI, Aider, opencode, Goose, Amp, Kiro… via `ccenv exec` | no | no (`$CCENV` set by exec) | `AGENTS.md` (most read it natively) |
@@ -486,7 +491,7 @@ SessionStart note. It never carries `secret_env` values.
   is not yet verified.
 - [docs/desktop.md](desktop.md) explains what reaches each surface.
 
-### Cloud sessions and Remote Control
+### Cloud sessions
 
 Cloud sessions have no access to your machine. When one needs AWS:
 
@@ -495,7 +500,13 @@ Cloud sessions have no access to your machine. When one needs AWS:
    Add `--login` to log in first.
 2. Paste the block into the session.
 
-The `skills/aws-handoff` skill walks the agent through this.
+To have the handoff in cloud sessions, commit `skills/aws-handoff` to the
+project as `.claude/skills/aws-handoff/SKILL.md`. It is user-invoked: type
+`/aws-handoff [profile]` in the session and it gives a scripted handoff.
+
+Remote Control is a local session driven from claude.ai: start it with
+`ccenv run` or in a synced repo, and the notes for those surfaces above
+apply ([docs/desktop.md](desktop.md#cloud-sessions-and-remote-control)).
 
 ### Codex
 
@@ -517,8 +528,9 @@ The `skills/aws-handoff` skill walks the agent through this.
 ### Gemini CLI
 
 - Run it with `ccenv run -t gemini`. The approval mode follows the level.
-- Consumer Google logins no longer work in Gemini CLI. Use
-  `gemini: { auth: vertex }` with the `gcp` module, or `gemini.api_key`.
+- Gemini CLI's consumer Google login may not be available for your account
+  (not yet verified); use `gemini: { auth: vertex }` with the `gcp` module,
+  or `gemini.api_key`.
   The API key lands in the process env.
 - Gemini CLI reads `GEMINI.md` by default. To make it read the rules, set
   `context.fileName: ["GEMINI.md", "AGENTS.md"]` in `.gemini/settings.json`

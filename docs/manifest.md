@@ -1,5 +1,10 @@
 # The ccenv manifest
 
+> This describes the version 2 manifest, read by ccenv 2.0 (beta `2.0.0b1`; see the README's
+> [Install](../README.md#install)). `ccenv --version` shows yours. ccenv 1.x reads only
+> [v1 manifests](#v1-manifests); it finds no profiles in a version 2 file (`ccenv list` prints
+> `no environments defined`).
+
 One file, `~/.config/ccenv/environments.yaml` (or `$CCENV_ROOT/environments.yaml`), says which
 identity applies where: the model provider, cloud accounts, GitHub account, git identity and
 any other variables. ccenv matches your working directory to a **profile** and applies it to one
@@ -11,10 +16,13 @@ starts.
 
 > **The four rules**
 >
-> 1. **Later layers win, maps merge.** `defaults`, then each role in `use:`, then the profile itself.
+> 1. **Later layers win, maps merge.** A layer is `defaults`, a role you `use:`, or the profile
+>    itself, applied in that order. See [roles and `use:`](#roles-and-use).
 > 2. **`null` means off: the tool sees no account.** `aws: null` gives the AWS CLI an empty config.
-> 3. **Compose upward.** A profile is at least as privileged as anything it uses.
+>    See [`null`, `"inherit"`, `inherit:` and `unset:`](#null-inherit-inherit-and-unset).
+> 3. **Compose upward.** A profile is at least as privileged as anything it uses. See [levels](#levels).
 > 4. **A secret is always `scheme:path`.** For example `sops:client-a/token` or `keychain:ccenv/gw`.
+>    See [secret references](#secret-references).
 
 Contents
 
@@ -34,6 +42,8 @@ See also: [recipes](recipes.md) for GitLab, npm, Docker, Terraform, other agents
 ---
 
 ## A minimal manifest
+
+It is also in [examples/minimal.yaml](../examples/minimal.yaml).
 
 ```yaml
 version: 2
@@ -237,17 +247,22 @@ session never runs as the wrong account by accident. These keys control that:
 |---|---|
 | `aws: { … }` | The profile's AWS settings. Your shell's AWS variables are cleared. |
 | *(no `aws` key anywhere in the chain)* | Nothing set. Your shell's AWS variables are still cleared, if the manifest uses `aws` anywhere. Likewise a variable some other profile sets in `secret_env`. |
-| `aws: null` | **Off and isolated.** The AWS CLI gets an empty config, so it cannot fall back to your `[default]` profile. Same idea for `gcp`, `azure` and `github`. The empty `_off` home is shared, so never log in inside it: ccenv moves a login it finds there aside (with a warning) and `doctor` reports it. |
+| `aws: null` | **Off and isolated.** The AWS CLI gets an empty config, so it cannot fall back to your `[default]` profile. Same idea for `gcp`, `azure` and `github`. |
 | `aws: inherit` | Off. Your shell's AWS variables pass through untouched. |
 | `inherit: [AWS_PROFILE]` | Keep these variables from your shell even though a module owns them. |
 | `unset: [DOCKER_HOST]` | Always remove these variables from the session. `unset` beats everything, including `inherit` and values a profile sets. |
 | `env: { X: null }` or `secret_env: { X: null }` | Remove `X` from the session (like `unset`, for one variable). |
 
+The empty home behind `null` (`homes/<module>/_off`) is shared by every profile that turns the
+module off, so never log in inside it: ccenv moves a login it finds there aside (with a warning)
+and `doctor` reports it.
+
 `unset` is unioned and sticky across layers, like the deny lists. `inherit` is unioned.
 
-One interaction to know: `null` in `env` and `unset` both win over **any** value for that
-variable, including one a later layer sets through `secret_env`. Use them in the profiles that
-should not see a variable, not in `defaults`.
+`unset` wins over every value for that variable. `null` in `env` (or `secret_env`) removes the
+variable even when another key sets it, for example a later layer's `secret_env`, but a later
+layer's own `env:` value replaces the null as usual. Use them in the profiles that should not see
+a variable, not in `defaults`.
 
 ### `fallback`
 
@@ -307,7 +322,7 @@ Names of profiles and roles: letters, digits, `.`, `_`, `-`, starting with a let
 | `aws`, `gcp`, `azure`, `github`, `git` | map, `inherit` or `null` | — | merged | [Modules](#modules). |
 | `claude`, `codex`, `gemini` | map | — | merged | [Tools](#tools). |
 
-Lists replace earlier lists (`match`, `claude.args`, …), except `permissions.deny`,
+Lists replace earlier lists (`claude.args`, `codex.args`, …), except `permissions.deny`,
 `permissions.ask`, `inherit` and `unset`, which are unioned. `""` sets an empty value; `null`
 removes the key.
 
@@ -323,8 +338,8 @@ Effective rules = the level's built-in rules (unless `builtin: false`) + every `
 chain + `claude.settings.permissions` lists. They reach Claude Code through the settings file
 `ccenv run` passes (`--settings`) and the `.claude/settings.local.json` that `ccenv sync` writes.
 Codex and Gemini do not get these rules in this release; Gemini gets `--approval-mode` from the
-level. The built-in secret rules also deny reading ccenv's own config and state directories, the
-age key, and the credential files of every module the manifest uses (for example
+level. The built-in secret rules also deny editing ccenv's own config and state directories, and
+reading the age key and the credential files of every module the manifest uses (for example
 `~/.aws/sso/cache`, `~/.config/gh/hosts.yml`, a Claude home's `.credentials.json`).
 
 Rules are a seatbelt for an agent that follows instructions, not a security boundary. Narrowly
@@ -366,8 +381,8 @@ isolated). A **home** is either a name, which means a directory ccenv manages un
 | `adc_file` | path | `GOOGLE_APPLICATION_CREDENTIALS` |
 
 - Also clears `GOOGLE_CREDENTIALS`, `GOOGLE_OAUTH_ACCESS_TOKEN`.
-- `gcp: null`: `CLOUDSDK_CONFIG` points at an empty directory. In agent sessions:
-  `CLOUDSDK_CORE_DISABLE_PROMPTS=1`.
+- `gcp: null`: `CLOUDSDK_CONFIG` points at an empty directory.
+- In agent sessions, when the profile has a gcp block: `CLOUDSDK_CORE_DISABLE_PROMPTS=1`.
 - `ccenv login [profile] --module gcp [--adc]` runs `gcloud auth login` (and
   `gcloud auth application-default login`) with the profile's environment, so a `home` gets its
   own login.
@@ -384,8 +399,8 @@ isolated). A **home** is either a name, which means a directory ccenv manages un
 - Also clears `ARM_CLIENT_ID ARM_CLIENT_SECRET ARM_USE_CLI ARM_USE_OIDC ARM_USE_MSI AZURE_DEFAULTS_GROUP`.
 - Without `home`, `az` keeps using `~/.azure` and its current subscription; only tools that read
   `ARM_SUBSCRIPTION_ID` (Terraform) are pinned. `status --why` notes this.
-- `azure: null`: `AZURE_CONFIG_DIR` points at an empty directory. In agent sessions:
-  `AZURE_CORE_LOGIN_EXPERIENCE_V2=no`.
+- `azure: null`: `AZURE_CONFIG_DIR` points at an empty directory.
+- In agent sessions, when the profile has an azure block: `AZURE_CORE_LOGIN_EXPERIENCE_V2=no`.
 - `ccenv login [profile] --module azure` runs `az login [--tenant …]`, then
   `az account set --subscription …` only inside a `home` (never against `~/.azure`).
 
@@ -408,11 +423,12 @@ With `auth`:
   Earlier helpers for that host (for example the macOS keychain) are reset for the session.
 - **Fails closed:** `GH_CONFIG_DIR` points at an empty directory, so if the token is missing,
   `gh` reports "not logged in" instead of using whichever account is active in your keyring
-  (not yet verified against every gh version). The cost: your gh aliases and config are not
-  loaded in that session; use `home:` if you need them. Your own direnv/shell output
-  (`shell --no-secrets` outside an agent session, which `use ccenv` runs) is the exception: it
-  leaves the token out by design, so it leaves `GH_CONFIG_DIR` alone too and `gh` there uses its
-  keyring login (`git push` uses the helper either way).
+  (not yet verified against every gh version).
+- The cost: your gh aliases and config are not loaded in that session; use `home:` if you need
+  them.
+- The exception is your own direnv/shell output (`shell --no-secrets` outside an agent session,
+  which `use ccenv` runs). It leaves the token out by design, so it leaves `GH_CONFIG_DIR` alone
+  too and `gh` there uses its keyring login (`git push` uses the helper either way).
 
 With `home`: `GH_CONFIG_DIR` (and `GH_HOST` for a non-github.com host), and git uses
 `gh auth git-credential` from that home.
@@ -445,6 +461,8 @@ All of it goes through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n
 any your shell already has. `CCENV_GIT_BASE` marks where ccenv's pairs start (0 in synced files,
 `shell --format env` and `desktop --vscode`), so a nested `ccenv exec`/`run` replaces them,
 including another profile's credential helper. ccenv never edits `~/.gitconfig`. `git: null` just sets no identity.
+
+- In agent sessions, when the profile has a git block: `GIT_TERMINAL_PROMPT=0`.
 
 #### env and secret_env
 
@@ -497,8 +515,8 @@ Secrets that reach the process environment (`oauth_token`, `bearer_token`, `expo
 `secret_env`) can be read by the agent with `env`; for those profiles consider
 `env: { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" }`.
 
-A new `home` starts empty (no user settings, plugins, MCP servers or `CLAUDE.md`). Until it holds
-a login, ccenv prints `<home> has no login yet: run /login in the first claude session started there`.
+A new `home` starts empty (no user settings, plugins, MCP servers or `CLAUDE.md`). While the home
+is still empty, ccenv prints `<home> has no login yet: run /login in the first claude session started there`.
 
 #### codex
 
@@ -535,7 +553,7 @@ A ref names its scheme. A bare value where a ref is expected is an error that su
 
 | Scheme | Form | Read with | Write with `ccenv secret set REF` |
 |---|---|---|---|
-| sops (default) | `sops:<group>/<key>` | `sops -d` of `~/.config/ccenv/secrets.enc.yaml`, key `["group"]["key"]`; one decrypt per launch | yes (value prompted, or piped on stdin; handed to sops on stdin when it supports `--value-stdin`). The first write creates `secrets.enc.yaml`, which needs `.sops.yaml` (see `ccenv init`) |
+| sops | `sops:<group>/<key>` | `sops -d` of `~/.config/ccenv/secrets.enc.yaml`, key `["group"]["key"]`; one decrypt per launch | yes (value prompted, or piped on stdin; handed to sops on stdin when it supports `--value-stdin`). The first write creates `secrets.enc.yaml`, which needs `.sops.yaml` (see `ccenv init`) |
 | keychain (macOS) | `keychain:<service>/<account>` | `security find-generic-password -s SERVICE -a ACCOUNT -w` | yes (`security` prompts for the value) |
 | 1Password | `op://<vault>/<item>/<field>` | `op read REF` | no |
 | gh | `gh:<login>` or `gh:<login>@<host>` | `gh auth token --user LOGIN --hostname HOST` | no (`gh auth login`) |
@@ -560,7 +578,10 @@ Details:
 - `cmd:` commands run with the environment ccenv itself started with, not the profile's, so put
   everything the command needs (addresses, project names) in its argv. `ccenv doctor` lists every
   `cmd:` ref.
-- For 1Password with several accounts, set `OP_ACCOUNT` through `env:`.
+- For 1Password with several accounts, export `OP_ACCOUNT` in the shell you start ccenv from, or
+  use a `cmd:` ref that names the account:
+  `{cmd: ["op", "read", "--account", "work", "op://Work/Sentry/token"]}`. A profile's `env:` does
+  not reach refs read at launch (it does reach helpers that run later in the session).
 - `ccenv secret --ref REF` prints a value (this is what helpers call). `ccenv secret ENV KEY`
   is the v1 form for `sops:ENV/KEY` and still works.
 
@@ -625,11 +646,14 @@ never names (`GITLAB_TOKEN` exported in your shell profile, …) are left alone;
 - Requirements that need the merged profile (a gateway without `base_url`, bedrock without
   `aws.region`, `github` with both `auth` and `home`) are checked when the profile is used, and by
   `doctor`.
-- `doctor` also reports: `level: power` without `confirm`, a readonly profile with a `gh:` login,
-  `agents_may_use` entries that would always be refused, `confirm` profiles with `match` (sync
-  skips them), conflicting modules, secret-looking `env` names, `cmd:` refs, profiles that
-  nothing can reach, profiles with no `aws` when `~/.aws/config` has a `[default]` profile
-  (add `aws: null`), and, when the manifest uses Gemini, `.env` files Gemini CLI would load.
+- `doctor` also reports, for example: `level: power` without `confirm`, a readonly profile with a
+  `gh:` login, `agents_may_use` entries that would always be refused, `confirm` profiles with
+  `match` (sync skips them), conflicting modules, secret-looking `env` names, `cmd:` refs,
+  profiles that nothing can reach, profiles with no `aws` when `~/.aws/config` or
+  `~/.aws/credentials` has a `[default]` profile (add `aws: null`), `codex.login: api` without
+  `codex.home` (a warning), `permissions.builtin: false` (an info line naming the layer), a login
+  found in an `_off` home (an error), a config directory readable by others, and, when the
+  manifest uses Gemini, `.env` files Gemini CLI would load.
 - The manifest may be YAML (needs PyYAML or `yq`) or JSON (no dependency).
 
 ### Files ccenv uses
@@ -639,7 +663,7 @@ never names (`GITLAB_TOKEN` exported in your shell profile, …) are left alone;
 | Manifest | `~/.config/ccenv/environments.yaml` (`$CCENV_ROOT` overrides the directory) |
 | sops secrets and config | `~/.config/ccenv/secrets.enc.yaml`, `~/.config/ccenv/.sops.yaml` |
 | Managed homes | `~/.local/state/ccenv/homes/<module>/<name>` (`$CCENV_STATE`, or `$XDG_STATE_HOME/ccenv`) |
-| Session records, sync ledger, audit log | `~/.local/state/ccenv/sessions/`, `sync-ledger.json`, `audit.jsonl` |
+| Session records, sync ledger, audit log | `~/.local/state/ccenv/sessions/`, `sync-ledger.json`, `audit.jsonl`; a copy of each session record also goes under your passwd home's `~/.local/state/ccenv/sessions/`, which no variable moves |
 | Generated Claude settings | `~/.cache/ccenv/<profile>.<hash>.settings.json` (`$XDG_CACHE_HOME`), pruned after 7 days |
 
 Everything ccenv writes is mode 0600 in 0700 directories. Secret values are never written to any
@@ -679,7 +703,8 @@ For a v1 file, ccenv keeps v1 behaviour where v2 would differ:
   provider variables; AWS variables only for an environment with an `aws:` block; `GH_TOKEN` and
   `GITHUB_TOKEN` only with a GitHub account or `secret_env.GH_TOKEN`), not `CLAUDE_CONFIG_DIR`,
   `OPENAI_API_KEY`, `GOOGLE_*` or `ARM_*`. An environment without `aws:` keeps your shell's
-  `AWS_PROFILE`, as v1 did; `aws: null` (after `ccenv migrate`) isolates it.
+  `AWS_PROFILE`, as v1 did. `ccenv migrate` writes `aws: "inherit"` for such an environment
+  (v1's behaviour) and suggests `aws: null`, which isolates it.
 
 A v1 file that uses v2 keys (`roles`, `use`, `level`, a `claude:` block, …) is an error that says
 to add `version: 2`. A v2 file with v1 keys (`provider`, `gateway`, `github.account`, …) is an
