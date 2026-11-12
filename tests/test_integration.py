@@ -12,7 +12,7 @@ import stat
 import sys
 import unittest
 
-from ccenv_testlib import REPO, Sandbox, has_yaml
+from actas_testlib import REPO, Sandbox, has_yaml
 
 
 class Help(Sandbox):
@@ -59,7 +59,7 @@ class Init(Sandbox):
 
     def test_writes_the_v2_starter_without_an_age_key(self):  # SPEC 0.1.2, test 64
         fresh = self.tmp / "fresh"
-        r = self.cli("init", env={"CCENV_ROOT": str(fresh), "SOPS_AGE_KEY_FILE": str(self.tmp / "none")})
+        r = self.cli("init", env={"ACTAS_ROOT": str(fresh), "SOPS_AGE_KEY_FILE": str(self.tmp / "none")})
         self.assertEqual(r.returncode, 0, r.stderr)
         text = (fresh / "environments.yaml").read_text()
         if self.m.yaml_available():
@@ -70,7 +70,7 @@ class Init(Sandbox):
         self.assertIn("keychain:", r.stderr + r.stdout)
         self.assertFalse((fresh / ".sops.yaml").exists())
         self.assertEqual(stat.S_IMODE(fresh.stat().st_mode), 0o700)
-        r = self.cli("status", "personal", "--json", env={"CCENV_ROOT": str(fresh)})
+        r = self.cli("status", "personal", "--json", env={"ACTAS_ROOT": str(fresh)})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["profile"], "personal")
 
@@ -97,7 +97,7 @@ class PackageHelper(Sandbox):
 
     def test_package_build_uses_the_console_script(self):  # SPEC 5.4, test 37
         self.m.BUILD = "package"
-        script = self.tmp / "venv" / "bin" / "ccenv"
+        script = self.tmp / "venv" / "bin" / "actas"
         script.parent.mkdir(parents=True)
         script.write_text("#!/bin/sh\n")
         saved = sys.argv[0]

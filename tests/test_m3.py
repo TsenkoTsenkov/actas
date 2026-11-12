@@ -10,7 +10,7 @@ import subprocess
 import sys
 import unittest
 
-from ccenv_testlib import REPO, Sandbox
+from actas_testlib import REPO, Sandbox
 
 SECRETS = {"client-a": {"token": "gw-SECRET-1", "npm": "npm-SECRET-2"}}
 SECRET_VALUES = ("gw-SECRET-1", "npm-SECRET-2")
@@ -67,7 +67,7 @@ class Base(Sandbox):
         return json.loads(f.read_text()) if f.exists() else {}
 
     def context(self, name):
-        return self.tmp / "cache" / "ccenv" / f"{name}.context.txt"
+        return self.tmp / "cache" / "actas" / f"{name}.context.txt"
 
     def assert_no_secret(self, *texts):
         for t in texts:
@@ -85,11 +85,11 @@ class Sync(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         data = self.read("client-a")
         self.assertEqual(data["env"]["AWS_PROFILE"], "client-a-dev")
-        self.assertEqual(data["env"]["CCENV"], "client-a")
-        # D-E: a file ccenv wrote there earlier is kept current, never a --clean hint;
+        self.assertEqual(data["env"]["ACTAS"], "client-a")
+        # D-E: a file actas wrote there earlier is kept current, never a --clean hint;
         # the update line names the root's profile instead of a "skip" line (R9)
         self.assertIn(f"updating {leftover}", r.stderr)
-        self.assertIn("is client-a; use `ccenv run` here", r.stderr)
+        self.assertIn("is client-a; use `actas run` here", r.stderr)
         self.assertNotIn(f"skip {leftover.parent.parent}", r.stderr)
         self.assertNotIn("--clean", r.stderr)
         self.assertEqual(json.loads(leftover.read_text())["env"]["AWS_PROFILE"], "client-a-prod-ro")
@@ -130,7 +130,7 @@ class Sync(Base):
         self.assertEqual(f.stat().st_mode & 0o777, 0o600)
         data = self.read("client-a")
         self.assertEqual((data["env"]["A_VAR"], data["env"]["B_VAR"], data["env"]["KEEP"]), ("1", "2", "1"))
-        deny = data["permissions"]["deny"]                      # the user's rule first, then ccenv's
+        deny = data["permissions"]["deny"]                      # the user's rule first, then actas's
         self.assertEqual(deny[0], "Bash(curl *)")
         self.assertIn("Bash(rm *)", deny)
         self.assertIn("Bash(git credential *)", deny)           # M4: the standard preset
@@ -155,7 +155,7 @@ class Sync(Base):
 
         r = self.cli("sync", "--clean")                              # D-E: every file is still a target
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.read("client-a")["env"]["CCENV"], "client-a")
+        self.assertEqual(self.read("client-a")["env"]["ACTAS"], "client-a")
         self.assertTrue(self.sf("personal").exists())
 
         m = manifest(client_env={"A_VAR": "1"})
@@ -195,7 +195,7 @@ class Sync(Base):
         r = self.cli("sync", "--include-confirm")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("to .gitignore", r.stderr)
-        self.assertEqual(self.read("power")["env"]["CCENV_LEVEL"], "power")
+        self.assertEqual(self.read("power")["env"]["ACTAS_LEVEL"], "power")
 
     def test_no_secret_in_generated_files(self):  # SPEC test 35
         self.assertEqual(self.cli("sync").returncode, 0)
@@ -211,7 +211,7 @@ class Sync(Base):
     def test_shared_is_gone(self):
         r = self.cli("sync", "--shared")
         self.assertEqual(r.returncode, 2)
-        self.assertIn("not in ccenv 2.0", r.stderr)
+        self.assertIn("not in actas 2.0", r.stderr)
 
 
 class Hook(Base):  # SPEC test 60
@@ -221,17 +221,17 @@ class Hook(Base):  # SPEC test 60
     def test_context_and_dedup(self):
         r = self.hook("sync")
         self.assertEqual((r.returncode, r.stdout),
-                         (0, "ccenv: profile client-a (run ccenv sync to refresh this note)\n"))
+                         (0, "actas: profile client-a (run actas sync to refresh this note)\n"))
         self.assertEqual(self.cli("sync", "client-a").returncode, 0)
         text = self.context("client-a").read_text()
         self.assertEqual(self.context("client-a").stat().st_mode & 0o777, 0o600)
-        self.assertTrue(text.startswith("ccenv: profile client-a (standard) · aws client-a-dev eu-west-1 · "
-                                        "claude gateway\nccenv: credentials follow this session"), text)
+        self.assertTrue(text.startswith("actas: profile client-a (standard) · aws client-a-dev eu-west-1 · "
+                                        "claude gateway\nactas: credentials follow this session"), text)
         self.assertIn("infra/prod → client-a-prod", text)               # nested profile note
         self.assertEqual(self.hook("sync").stdout, text)
-        self.assertEqual(self.hook("sync", CCENV_SESSION="4242").stdout, "")   # run's hook speaks
-        self.assertEqual(self.hook("run", CCENV_SESSION="4242", CCENV="client-a").stdout, text)
-        self.assertEqual(self.hook("run", CCENV="personal").stdout, "")
+        self.assertEqual(self.hook("sync", ACTAS_SESSION="4242").stdout, "")   # run's hook speaks
+        self.assertEqual(self.hook("run", ACTAS_SESSION="4242", ACTAS="client-a").stdout, text)
+        self.assertEqual(self.hook("run", ACTAS="personal").stdout, "")
         r = self.cli("hook", "session-start", "--profile", "../x", "--source", "run")
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         self.assertNotIn("nested", self.cli("sync", "personal").stderr)
@@ -245,11 +245,11 @@ class Hook(Base):  # SPEC test 60
         words = shlex.split(group["hooks"][0]["command"])
         self.assertTrue(all(os.path.isabs(w) for w in words[:2]))
         self.assertEqual(words[2:], ["hook", "session-start", "--profile", "client-a", "--source", "run"])
-        self.assertTrue(got["env"]["CCENV_SESSION"].isdigit())
-        self.assertNotIn("CCENV_SESSION", got["settings"]["env"])
+        self.assertTrue(got["env"]["ACTAS_SESSION"].isdigit())
+        self.assertNotIn("ACTAS_SESSION", got["settings"]["env"])
         self.assertTrue(self.context("client-a").exists())
         # The installed command really prints the note.
-        out = subprocess.run(words, capture_output=True, text=True, env=dict(os.environ, CCENV="client-a"))
+        out = subprocess.run(words, capture_output=True, text=True, env=dict(os.environ, ACTAS="client-a"))
         self.assertEqual(out.stdout, self.context("client-a").read_text())
 
 
@@ -269,11 +269,11 @@ class LedgerChecks(Base):  # SPEC test 38 and the 6.1 run warning
         next(iter(led.values()))["helpers"].append(str(self.tmp / "gone" / "python3"))
         f.write_text(json.dumps(led))
         r = self.cli("run", "client-a", "--no-check", **here)
-        self.assertIn("no longer exists; run ccenv sync", r.stderr)
+        self.assertIn("no longer exists; run actas sync", r.stderr)
         r = self.cli("doctor", "--json")
         sync = [c for c in json.loads(r.stdout)["checks"] if c["name"] == "sync"]
         self.assertEqual(sync[0]["status"], "warn")
-        self.assertIn("run ccenv sync", sync[0]["detail"])
+        self.assertIn("run actas sync", sync[0]["detail"])
 
 
 class Desktop(Base):  # SPEC test 61
@@ -302,9 +302,9 @@ class Desktop(Base):  # SPEC test 61
         self.assertEqual(r.returncode, 0, r.stderr)
         pairs = json.loads(r.stdout)["claudeCode.environmentVariables"]
         env = {p["name"]: p["value"] for p in pairs}
-        self.assertEqual((env["AWS_PROFILE"], env["CCENV"]), ("client-a-dev", "client-a"))
+        self.assertEqual((env["AWS_PROFILE"], env["ACTAS"]), ("client-a-dev", "client-a"))
         self.assertNotIn("NPM_TOKEN", env)
-        self.assertEqual(env["CCENV_GIT_BASE"], "0")
+        self.assertEqual(env["ACTAS_GIT_BASE"], "0")
         self.assert_no_secret(r.stdout, r.stderr)
         r = self.cli("desktop", "client-a")
         self.assertIn("--print-3p", r.stdout)
@@ -318,10 +318,10 @@ class Instructions(Base):  # SPEC test 63 (instructions side)
     def test_agent_rules(self):
         r = self.cli("instructions")
         self.assertEqual(r.stdout, self.m.AGENT_RULES + "\n")
-        self.assertTrue(r.stdout.startswith("## Credentials (ccenv)\n"))
+        self.assertTrue(r.stdout.startswith("## Credentials (actas)\n"))
         self.assertEqual([ln[:2] for ln in r.stdout.splitlines()[2:]],
                          ["1.", "2.", "3.", "4.", "5.", "6.", "7.", "8."])
-        for bad in ("this will prompt", "After approval", "ccenv request"):
+        for bad in ("this will prompt", "After approval", "actas request"):
             self.assertNotIn(bad, r.stdout)
         for agent, hint in (("claude", "@AGENTS.md"), ("gemini", "context.fileName"), ("codex", "AGENTS.md")):
             r = self.cli("instructions", "--agent", agent)
@@ -333,18 +333,18 @@ class Instructions(Base):  # SPEC test 63 (instructions side)
         self.assertEqual(r.stdout, (REPO / "contrib" / "direnvrc").read_text())
         rc = self.tmp / "direnvrc"
         rc.write_text(r.stdout)
-        wrapper = self.fakebin / "ccenv"
+        wrapper = self.fakebin / "actas"
         wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(self.bin))} \"$@\"\n")
         wrapper.chmod(0o755)
         script = ('watch_file() { :; }; log_error() { echo "LOGERR $*" >&2; }; . "$1"; cd "$2" || exit 9; '
-                  'use_ccenv; rc=$?; echo "rc=$rc CCENV=${CCENV-} AWS=${AWS_PROFILE-} NPM=${NPM_TOKEN-unset}"')
+                  'use_actas; rc=$?; echo "rc=$rc ACTAS=${ACTAS-} AWS=${AWS_PROFILE-} NPM=${NPM_TOKEN-unset}"')
         out = subprocess.run(["bash", "-c", script, "_", str(rc), str(self.code / "client-a")],
                              capture_output=True, text=True)
-        self.assertEqual(out.stdout, "rc=0 CCENV=client-a AWS=client-a-dev NPM=unset\n", out.stderr)
+        self.assertEqual(out.stdout, "rc=0 ACTAS=client-a AWS=client-a-dev NPM=unset\n", out.stderr)
         out = subprocess.run(["bash", "-c", script, "_", str(rc), str(self.tmp)],
                              capture_output=True, text=True)
-        self.assertTrue(out.stdout.startswith("rc=1 CCENV= "), out.stdout)
-        self.assertIn("LOGERR ccenv failed", out.stderr)
+        self.assertTrue(out.stdout.startswith("rc=1 ACTAS= "), out.stdout)
+        self.assertIn("LOGERR actas failed", out.stderr)
 
 
 if __name__ == "__main__":

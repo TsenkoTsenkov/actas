@@ -1,10 +1,10 @@
-# Example ccenv manifest in the version 1 format. ccenv 2 still reads it
-# unchanged; `ccenv migrate` prints it as version 2. New manifests should use
+# Example actas manifest in the version 1 format. actas 2 still reads it
+# unchanged; `actas migrate` prints it as version 2. New manifests should use
 # the version 2 format: see environments.yaml and docs/manifest.md.
 # Every name below is a placeholder.
 #
 # This file holds names and pointers only. Secret values live in
-# ~/.config/ccenv/secrets.enc.yaml, set with:  ccenv secret <env> <key> --set
+# ~/.config/actas/secrets.enc.yaml, set with:  actas secret <env> <key> --set
 version: 1
 
 # Applied to every environment unless the environment sets its own value.

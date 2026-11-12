@@ -13,7 +13,7 @@ import time
 import unittest
 from unittest import mock
 
-from ccenv_testlib import FAKE_COMMON, REPO, Sandbox, make_fakebin
+from actas_testlib import FAKE_COMMON, REPO, Sandbox, make_fakebin
 from test_m4 import AGENT, ME, PP, T0, Base, MANIFEST
 
 SECRETS = {"a": {"gh": "ghp_A_SECRET", "vault": "hvs.A_SECRET", "nl": "tok-NL\n"},
@@ -45,21 +45,21 @@ class G1Security(Sandbox):
         self.assertEqual(r.returncode, 0, r.stderr)
         return dict(x.split("=", 1) for x in r.stdout.splitlines() if "=" in x)
 
-    # F0: pairs written by sync / --format env carry CCENV_GIT_BASE=0, so a
+    # F0: pairs written by sync / --format env carry ACTAS_GIT_BASE=0, so a
     # nested exec into another profile drops a's credential helper.
     def test_f0_synced_git_helper_does_not_survive_exec(self):
         r = self.cli("sync", "a")
         self.assertEqual(r.returncode, 0, r.stderr)
         synced = json.loads((self.tmp / "code/a/.claude/settings.local.json").read_text())["env"]
-        self.assertEqual(synced["CCENV_GIT_BASE"], "0")
-        parent = {k: v for k, v in synced.items() if k.startswith(("GIT_CONFIG", "CCENV_GIT"))}
+        self.assertEqual(synced["ACTAS_GIT_BASE"], "0")
+        parent = {k: v for k, v in synced.items() if k.startswith(("GIT_CONFIG", "ACTAS_GIT"))}
         env = self.exec_env("personal", env=parent)
         helpers = [env[k.replace("KEY", "VALUE")] for k in env
                    if k.startswith("GIT_CONFIG_KEY_") and env[k].endswith(".helper")]
         self.assertEqual(helpers, [])
         self.assertEqual(env["GIT_CONFIG_COUNT"], "2")                 # personal's name + email
         out = self.cli("shell", "a", "--format", "env").stdout
-        self.assertIn("CCENV_GIT_BASE=0", out.splitlines())
+        self.assertIn("ACTAS_GIT_BASE=0", out.splitlines())
 
     # F2: a login inside a shared `_off` home is moved aside, never used.
     def test_f2_contaminated_off_home_is_moved_aside(self):
@@ -180,7 +180,7 @@ class G1Security(Sandbox):
             self.assertNotIn("NOSLASH", r.stdout + r.stderr, args)
         r = self.cli("status", "x", "--json")
         self.assertIn("sops:x/token", r.stdout + r.stderr)
-        self.assertIn("ccenv secret set", r.stdout + r.stderr)
+        self.assertIn("actas secret set", r.stdout + r.stderr)
         self.write_manifest({"environments": {"v": {"secret_env": {"T": "ghp bad SECRETVALUE"}}}})
         r = self.cli("list")
         self.assertNotIn("SECRETVALUE", r.stdout + r.stderr)
@@ -220,24 +220,24 @@ class G2Guardrails(Base):
 
     def stop_reason(self, err):
         first = err.splitlines()[0] if err else ""
-        return first.split("reason=")[1].split()[0] if first.startswith("ccenv-stop:") else None
+        return first.split("reason=")[1].split()[0] if first.startswith("actas-stop:") else None
 
     # F8: a run session's record cannot be dropped by moving XDG_STATE_HOME or
-    # HOME (CCENV_SESSION says one should exist), nor by hiding `ps`.
+    # HOME (ACTAS_SESSION says one should exist), nor by hiding `ps`.
     def test_f8_hidden_record_is_an_override(self):
-        code, _, err = self.call("exec", "std", "--", "true", env=dict(AGENT, CCENV="std",
-                                                                       CCENV_SESSION=str(PP)))
+        code, _, err = self.call("exec", "std", "--", "true", env=dict(AGENT, ACTAS="std",
+                                                                       ACTAS_SESSION=str(PP)))
         self.assertEqual(self.stop_reason(err), "override", err)
-        code, _, err = self.call("exec", "std", "--", "true", env=dict(AGENT, CCENV="std"), ps="")
-        self.assertEqual(self.stop_reason(err), "no_session", err)   # no process table: $CCENV not trusted
+        code, _, err = self.call("exec", "std", "--", "true", env=dict(AGENT, ACTAS="std"), ps="")
+        self.assertEqual(self.stop_reason(err), "no_session", err)   # no process table: $ACTAS not trusted
         os.environ["PATH"] = str(self.tmp)                            # no ps on PATH, no fallback dirs
         self.assertTrue(self.m.read_ps())
-        # run sets CCENV_SESSION only when it wrote a record
+        # run sets ACTAS_SESSION only when it wrote a record
         code, _, err = self.call("run", "std", "--no-check", ps="", overrides=True)
         self.assertEqual(code, 0, err)
-        self.assertNotIn("CCENV_SESSION", self.execs[-1][1])
+        self.assertNotIn("ACTAS_SESSION", self.execs[-1][1])
 
-    # F9: a nested `ccenv run` keeps the outer session's reach.
+    # F9: a nested `actas run` keeps the outer session's reach.
     def test_f9_nested_run_is_not_transitive(self):
         self.record("std")
         code, _, err = self.call("run", "std2", "-t", "codex", "--no-check", env=AGENT)
@@ -279,10 +279,10 @@ class G2Guardrails(Base):
         self.assertEqual(self.stop_reason(err), "not_allowed", err)    # gated as ro, never run as std
         self.assertEqual(self.execs, [])
         code, _, err = self.call("exec", "--", "true", env=AGENT, cwd=self.ro)
-        self.assertEqual((code, self.execs[-1][1]["CCENV"]), (0, "std"), err)   # no --cwd: the session
-        code, out, _ = self.call("--cwd", str(self.ro), "status", "--json", env={"CCENV": "std"},
+        self.assertEqual((code, self.execs[-1][1]["ACTAS"]), (0, "std"), err)   # no --cwd: the session
+        code, out, _ = self.call("--cwd", str(self.ro), "status", "--json", env={"ACTAS": "std"},
                                  overrides=True)
-        self.assertEqual(json.loads(out)["profile"], "ro")              # direnv-style $CCENV too
+        self.assertEqual(json.loads(out)["profile"], "ro")              # direnv-style $ACTAS too
 
     # F12 / F32 / D-F: a fallback-only (or unmatched) directory is no mismatch.
     def test_f12_fallback_is_not_a_mismatch(self):
@@ -298,49 +298,49 @@ class G2Guardrails(Base):
         self.assertTrue(json.loads(out)["mismatch"])
         self.assertIn("this directory is matched to another profile", self.m.AGENT_RULES)
 
-    # F11: `ccenv exec <p> -- aider` marks the agent it starts.
+    # F11: `actas exec <p> -- aider` marks the agent it starts.
     def test_f11_exec_marks_known_agent_clis(self):
         self.call("exec", "ro", "--", "/usr/local/bin/aider", "--yes", overrides=True)
-        self.assertEqual(self.execs[-1][1]["CCENV_AGENT"], "aider")
+        self.assertEqual(self.execs[-1][1]["ACTAS_AGENT"], "aider")
         self.call("exec", "ro", "--", "ls", overrides=True)
-        self.assertNotIn("CCENV_AGENT", self.execs[-1][1])
+        self.assertNotIn("ACTAS_AGENT", self.execs[-1][1])
 
-    # F27: CCENV_ROOT/CCENV_STATE that name the default places are no override.
+    # F27: ACTAS_ROOT/ACTAS_STATE that name the default places are no override.
     def test_f27_default_paths_are_not_an_override(self):
-        default = {"CCENV_ROOT": str(self.home / ".config" / "ccenv"),
-                   "CCENV_STATE": str(self.tmp / "xstate" / "ccenv")}
+        default = {"ACTAS_ROOT": str(self.home / ".config" / "actas"),
+                   "ACTAS_STATE": str(self.tmp / "xstate" / "actas")}
         code, _, err = self.call("exec", "ro", "--", "true", env=dict(AGENT, **default), cwd=self.ro)
         self.assertEqual(code, 0, err)
-        code, _, err = self.call("exec", "ro", "--", "true", env=dict(AGENT, CCENV_ROOT=str(self.root)),
+        code, _, err = self.call("exec", "ro", "--", "true", env=dict(AGENT, ACTAS_ROOT=str(self.root)),
                                  cwd=self.ro)
         self.assertEqual(self.stop_reason(err), "override", err)
 
 
 class G2Docs(Sandbox):
     DOCS = ("README.md", "AGENTS.md", "SECURITY.md", "docs/agents.md", "docs/desktop.md", "docs/recipes.md",
-            "docs/manifest.md", "skills/ccenv/SKILL.md")
+            "docs/manifest.md", "skills/actas/SKILL.md")
 
     def text(self, path):
         return (REPO / path).read_text()
 
-    # F10 / F21 / D-D: never advise a profile-level CCENV_AGENT.
+    # F10 / F21 / D-D: never advise a profile-level ACTAS_AGENT.
     def test_f10_no_profile_level_agent_marker(self):
         for path in self.DOCS:
-            self.assertNotRegex(self.text(path), r"env:\s*\{\s*CCENV_AGENT", path)
+            self.assertNotRegex(self.text(path), r"env:\s*\{\s*ACTAS_AGENT", path)
 
     # F11: the docs say interpreted agent CLIs are not recognised by name on macOS.
     def test_f11_docs_admit_the_interpreter_limit(self):
         for path in ("docs/agents.md", "docs/recipes.md"):
             self.assertIn("python", self.text(path), path)
-            self.assertIn("CCENV_AGENT=", self.text(path), path)
+            self.assertIn("ACTAS_AGENT=", self.text(path), path)
 
     # F13: the threat model does not claim secret reads are stopped.
     def test_f13_threat_model_is_honest_about_helpers(self):
         text = self.text("docs/agents.md")
-        self.assertNotIn("read secrets through ccenv", text)
+        self.assertNotIn("read secrets through actas", text)
         self.assertIn("audit-logged", text)
 
-    # F8 / F27: the anchor docs name XDG_STATE_HOME and the exported-CCENV_ROOT caveat.
+    # F8 / F27: the anchor docs name XDG_STATE_HOME and the exported-ACTAS_ROOT caveat.
     def test_f8_f27_docs(self):
         self.assertIn("XDG_STATE_HOME", self.text("AGENTS.md"))
         self.assertIn("reason=override", self.text("README.md"))
@@ -368,7 +368,7 @@ class G3Compat(Sandbox):
                               "token": "sops:a/gw"}},
             "foundry": {"env": {"CLAUDE_CODE_USE_FOUNDRY": "1"}},
             "m": {"match": "%(tmp)s/code/m", "claude": {"settings": {"model": "opus"}},
-                  "env": {"FOO": "ccenv"}},
+                  "env": {"FOO": "actas"}},
         },
     }
 
@@ -405,7 +405,7 @@ class G3Compat(Sandbox):
         self.assertIn("GH_TOKEN", d["env"]["secret"])
         self.write_manifest({"environments": {"v": {"match": "%(tmp)s/code/a", "aws": {"profile": "p"}}}})
         (shell,) = self.doctor("shell", **here)
-        self.assertIn("ccenv migrate", shell)
+        self.assertIn("actas migrate", shell)
 
     # F28 / D-A: a v1 environment without an aws (github) block keeps the shell's values.
     def test_f28_v1_keeps_unconfigured_module_vars(self):
@@ -427,7 +427,7 @@ class G3Compat(Sandbox):
         (detail,) = self.doctor("aws default")                           # static keys count too
         self.assertIn("~/.aws/credentials has a [default] profile, and bare set no aws", detail)
         self.assertIn("unless your shell exports AWS_PROFILE", detail)
-        self.assertIn("after ccenv migrate", detail)
+        self.assertIn("after actas migrate", detail)
 
     def exec_env(self, name, parent):
         r = self.ok("exec", name, "--", "env", env=parent)
@@ -446,17 +446,17 @@ class G3Compat(Sandbox):
         r = self.ok("sync", "a")
         self.assertIn(f"updating {f}", r.stderr)
         data = json.loads(f.read_text())
-        self.assertEqual((data["env"]["AWS_PROFILE"], data["env"]["CCENV"], data["env"]["MINE"]),
+        self.assertEqual((data["env"]["AWS_PROFILE"], data["env"]["ACTAS"], data["env"]["MINE"]),
                          ("a-aws", "a", "1"))
         self.assertNotIn("apiKeyHelper", json.dumps({k: v for k, v in data.items() if v}))
-        self.assertEqual(json.loads(self.sf("a").read_text())["env"]["CCENV"], "a")
+        self.assertEqual(json.loads(self.sf("a").read_text())["env"]["ACTAS"], "a")
         self.assertFalse(self.sf("a/sub").exists())
 
     # F18 / F20: a matched folder that is not a repo: its child repos get the file.
     def test_f18_child_repos_of_a_plain_folder(self):
         r = self.ok("sync", "a")
         for d in ("folder", "folder/api", "folder/group/web"):
-            self.assertEqual(json.loads(self.sf(d).read_text())["env"]["CCENV"], "a", d)
+            self.assertEqual(json.loads(self.sf(d).read_text())["env"]["ACTAS"], "a", d)
             self.assertIn(f"wrote {self.sf(d)}", r.stdout)
         self.assertFalse(self.sf("folder/theirs").exists())            # resolves to `other`
         self.assertFalse(self.sf("folder/plain").exists())             # not a repo
@@ -466,7 +466,7 @@ class G3Compat(Sandbox):
         out = self.ok("shell", "a", "--no-secrets", "--format", "direnv", env={"GH_TOKEN": "x"}).stdout
         self.assertNotIn("GH_CONFIG_DIR", out)
         self.assertIn("unset GH_TOKEN", out)                             # another identity's token goes
-        out = self.ok("shell", "a", "--no-secrets", "--format", "direnv", env={"CCENV_AGENT": "aider"}).stdout
+        out = self.ok("shell", "a", "--no-secrets", "--format", "direnv", env={"ACTAS_AGENT": "aider"}).stdout
         self.assertIn("GH_CONFIG_DIR", out)                              # agent sessions stay fail-closed
         r = self.ok("exec", "a", "--", "sh", "-c", 'echo "$GH_CONFIG_DIR"')
         self.assertTrue(r.stdout.strip().endswith("/_off"))
@@ -476,13 +476,13 @@ class G3Compat(Sandbox):
         self.ok("sync", "a")
         r = self.ok("--cwd", str(self.code / "a/sub"), "run", "--no-check")
         self.assertNotIn("use profile", r.stderr)
-        self.assertNotIn("run ccenv sync", r.stderr)
+        self.assertNotIn("run actas sync", r.stderr)
         self.assertIn("synced to a", r.stderr)
         m = json.loads((self.root / "environments.yaml").read_text())
         m["profiles"]["a"]["match"] = ["%(tmp)s/code/a-wt"]
         self.write_manifest(m)
         r = self.ok("--cwd", str(self.code / "a/sub"), "run", "--no-check")
-        self.assertIn("run ccenv sync", r.stderr)                         # stale entry
+        self.assertIn("run actas sync", r.stderr)                         # stale entry
         self.assertNotIn("use profile", r.stderr)
 
     # F33: a *.ghe.com token sets GH_HOST, so gh outside a repo targets that host.
@@ -498,7 +498,7 @@ class G3Compat(Sandbox):
         self.ok("sync", "m")
         self.ok("sync", "m")                                             # idempotent: prev survives a re-sync
         data = json.loads(f.read_text())
-        self.assertEqual((data["model"], data["env"]["FOO"]), ("opus", "ccenv"))
+        self.assertEqual((data["model"], data["env"]["FOO"]), ("opus", "actas"))
         m = json.loads((self.root / "environments.yaml").read_text())
         del m["profiles"]["m"]["claude"]
         self.write_manifest(m)
@@ -573,7 +573,7 @@ class G3Docs(Sandbox):
 
     # F35: the saved-environment example is not a gateway profile.
     def test_f35_desktop_example(self):
-        self.assertNotIn("ccenv shell client-a --format env", self.text("docs/desktop.md"))
+        self.assertNotIn("actas shell client-a --format env", self.text("docs/desktop.md"))
 
 
 # A `yq` like Debian/Ubuntu's kislyuk/yq: rejects `-o`, prints JSON for `yq .`.
@@ -642,7 +642,7 @@ class G4Parser(Sandbox):
 
 class G4Handoff(Base):
     # F24: on X11 with wl-clipboard installed, xclip is used, and its
-    # background server (which keeps stdout open) does not hang ccenv.
+    # background server (which keeps stdout open) does not hang actas.
     def test_f24_xclip_on_x11_does_not_hang(self):
         clip = make_fakebin(self.tmp / "clip", only=("aws", "ps", "wl-copy"))
         (clip / "xclip").write_text(f"#!/bin/sh\n/bin/cat > {self.tmp}/clipboard\n(/bin/sleep 15) &\nexit 0\n")
@@ -695,7 +695,7 @@ if args[:2] == ["sts", "get-caller-identity"]:
 class G4Login(Sandbox):
     manifest = {"version": 2, "profiles": {"c": {"github": {"auth": "gh:ada-client"}}}}
 
-    # F39: `ccenv login --module github` puts gh's previous active account back.
+    # F39: `actas login --module github` puts gh's previous active account back.
     def test_f39_gh_login_switches_back(self):
         r = self.cli("login", "c", "--module", "github", env={"FAKE_GH_USERS": "ada-personal,ada-client"})
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -722,14 +722,14 @@ class G4Status(Sandbox):
     # F36: help shows how to call exec and secret; no-match says what to add.
     def test_f36_usage_lines(self):
         r = self.cli("help", "exec")
-        self.assertIn("usage: ccenv exec [profile] [--reason TEXT] [--json] -- command [args...]", r.stdout)
-        self.assertIn("ccenv secret set REF", self.cli("help", "secret").stdout)
+        self.assertIn("usage: actas exec [profile] [--reason TEXT] [--json] -- command [args...]", r.stdout)
+        self.assertIn("actas secret set REF", self.cli("help", "secret").stdout)
         r = self.cli("help", "exce")
         self.assertEqual(r.returncode, 2)
         self.assertIn("did you mean: exec?", r.stderr)
         self.assertNotIn("commands:", r.stderr)                    # no full help dump
         r = self.cli("exec", "h", "aws", "s3", "ls")
-        self.assertIn("ccenv exec <profile> -- aws s3 ls", r.stderr)
+        self.assertIn("actas exec <profile> -- aws s3 ls", r.stderr)
         r = self.cli("status", "--cwd", str(self.tmp))
         self.assertIn("add `match: [~/code/x/**]` to a profile, or `fallback: <profile>`", r.stderr)
 
@@ -754,11 +754,11 @@ class G4Docs(unittest.TestCase):
         sub = t[t.index("**Two claude.ai subscriptions.**"):t.index("**A client with its own gateway")]
         self.assertIn("one claude.ai account per app", sub)
         self.assertIn("Nothing global changes when you run a profile", t)
-        self.assertNotIn("only through `ccenv run`", self.text("docs/desktop.md"))
+        self.assertNotIn("only through `actas run`", self.text("docs/desktop.md"))
 
 
 class Simplify(Sandbox):
-    """The behaviour-preserving simplification of bin/ccenv: test-only APIs
+    """The behaviour-preserving simplification of bin/actas: test-only APIs
     are gone, and the merged code paths behave as the separate ones did."""
     manifest = {"version": 2, "profiles": {"good": {"match": "%(tmp)s/g"},
                                            "bad": {"use": ["no-such-role"]}}}
@@ -836,7 +836,7 @@ class Round2(Sandbox):
         "b": {"match": "%(tmp)s/code/b", "github": {"auth": "gh:ada@acme.example"}},
         "gw": {"match": "%(tmp)s/code/gw", "claude": {"provider": "gateway", "base_url": "https://llm.gw.example",
                                                       "token": "sops:a/tok"}},
-        "k": {"match": "%(tmp)s/code/k", "env": {"DEPLOY_KEY_PATH": "/keys/k.pem", "PLAIN": "ccenv"}},
+        "k": {"match": "%(tmp)s/code/k", "env": {"DEPLOY_KEY_PATH": "/keys/k.pem", "PLAIN": "actas"}},
     }}
 
     def setUp(self):
@@ -889,13 +889,13 @@ class Round2(Sandbox):
         self.assertTrue(self.sf("gw").exists())
         self.assertIn(str(self.sf("gw")), self.ledger())
 
-    # R3a: ccenv's own output is never recorded as the user's value.
+    # R3a: actas's own output is never recorded as the user's value.
     def test_r3_own_output_is_not_prev(self):
-        own = self.m.put_fragment({"env": {"CCENV": "k", "CCENV_LEVEL": "standard", "X": "old"}, "model": "a"},
-                                  {"env": {"CCENV": "k", "X": "new"}, "model": "b"})
-        self.assertNotIn("prev", own)                                    # an unledgered ccenv-written file
-        own = self.m.put_fragment({"env": {"CCENV_LEVEL": "readonly", "X": "mine", "Y": "same"}},
-                                  {"env": {"CCENV_LEVEL": "standard", "X": "ccenv", "Y": "same"}})
+        own = self.m.put_fragment({"env": {"ACTAS": "k", "ACTAS_LEVEL": "standard", "X": "old"}, "model": "a"},
+                                  {"env": {"ACTAS": "k", "X": "new"}, "model": "b"})
+        self.assertNotIn("prev", own)                                    # an unledgered actas-written file
+        own = self.m.put_fragment({"env": {"ACTAS_LEVEL": "readonly", "X": "mine", "Y": "same"}},
+                                  {"env": {"ACTAS_LEVEL": "standard", "X": "actas", "Y": "same"}})
         self.assertEqual(own["prev"], {"env.X": "mine", "env.Y": "same"})   # an equal value is still yours
         self.ok("sync", "k")
         (self.tmp / "state" / "sync-ledger.json").unlink()               # the ledger is lost
@@ -904,9 +904,9 @@ class Round2(Sandbox):
         self.drop_profile("k")
         self.ok("sync", "--clean")
         left = json.loads(self.sf("k").read_text())                      # (unledgered permission rules stay)
-        self.assertEqual((left.get("env"), left.get("apiKeyHelper")), (None, None))   # no env.CCENV restored
+        self.assertEqual((left.get("env"), left.get("apiKeyHelper")), (None, None))   # no env.ACTAS restored
 
-    # R3b: a credential-looking env value ccenv replaced is never copied into the ledger.
+    # R3b: a credential-looking env value actas replaced is never copied into the ledger.
     def test_r3_credential_values_stay_out_of_the_ledger(self):
         f = self.sf("k")
         f.parent.mkdir()
@@ -937,14 +937,14 @@ class Round2(Sandbox):
         self.assertEqual(json.loads(f.read_text()), {"model": "mine"})
 
     def in_run_a(self):
-        """(inrun(cmd), ccenv): cmd runs as the agent inside `ccenv run a`,
-        with the default config and state places (no CCENV_ROOT/STATE)."""
-        cfg = self.home / ".config" / "ccenv"
+        """(inrun(cmd), actas): cmd runs as the agent inside `actas run a`,
+        with the default config and state places (no ACTAS_ROOT/STATE)."""
+        cfg = self.home / ".config" / "actas"
         cfg.mkdir(parents=True)
         for n in ("environments.yaml", "secrets.enc.yaml"):
             (cfg / n).write_text((self.root / n).read_text())
-        os.environ.pop("CCENV_ROOT")
-        os.environ.pop("CCENV_STATE")
+        os.environ.pop("ACTAS_ROOT")
+        os.environ.pop("ACTAS_STATE")
         claude = self.fakebin / "claude"
         claude.write_text('#!/bin/sh\nCLAUDECODE=1 sh -c "$VERIFY_CMD" > "$VERIFY_OUT" 2>&1\n'
                           'echo "rc=$?" >> "$VERIFY_OUT"\n')
@@ -957,13 +957,13 @@ class Round2(Sandbox):
             return out.read_text()
         return inrun, f"{shlex.quote(sys.executable)} {shlex.quote(str(self.bin))}"
 
-    # R5: inside `ccenv run a`, dropping CCENV_SESSION and moving XDG_STATE_HOME
+    # R5: inside `actas run a`, dropping ACTAS_SESSION and moving XDG_STATE_HOME
     # does not turn the session into a self-asserted one.
     def test_r5_record_is_found_at_the_fixed_place(self):
-        inrun, ccenv = self.in_run_a()
-        self.assertIn("reason=not_allowed", inrun(f"{ccenv} exec b -- true"))
+        inrun, actas = self.in_run_a()
+        self.assertIn("reason=not_allowed", inrun(f"{actas} exec b -- true"))
         self.assertTrue(list(self.user_sessions.glob("*.json")))
-        text = inrun(f"env -u CCENV_SESSION XDG_STATE_HOME={self.tmp}/elsewhere CCENV=b {ccenv} exec b -- true")
+        text = inrun(f"env -u ACTAS_SESSION XDG_STATE_HOME={self.tmp}/elsewhere ACTAS=b {actas} exec b -- true")
         self.assertIn("reason=override", text)
         self.assertIn("rc=3", text)
 
@@ -978,7 +978,7 @@ class Round2(Sandbox):
         self.assertIn("SYSTEM-PS", self.m.read_ps())
         self.m.PS_BINS = (str(self.tmp / "missing"),)
         self.assertIn("PATH-PS", self.m.read_ps())                       # only when no system ps exists
-        self.assertIn('PS_BINS = ("/bin/ps", "/usr/bin/ps")', (REPO / "bin" / "ccenv").read_text())
+        self.assertIn('PS_BINS = ("/bin/ps", "/usr/bin/ps")', (REPO / "bin" / "actas").read_text())
 
     # R7: sync moves a contaminated _off home aside, status warns, a failed move dies cleanly.
     def test_r7_off_home_in_sync_and_status(self):
@@ -1007,7 +1007,7 @@ class Round2(Sandbox):
         self.assertNotIn(["auth", "switch"], [c["argv"][:2] for c in self.calls("gh")])
         self.assertNotIn("active account", r.stderr)
 
-    # R9: a nested directory that ccenv updates gets no contradicting "skip" line.
+    # R9: a nested directory that actas updates gets no contradicting "skip" line.
     def test_r9_no_skip_line_before_an_update(self):
         sub = self.code / "a" / "sub"
         sub.mkdir()
@@ -1057,7 +1057,7 @@ class Round2(Sandbox):
         checks = {c["name"]: c for c in json.loads(r.stdout)["checks"]}
         self.assertEqual(checks["gh accts"]["detail"], "ada, bob")
 
-    # R13: the docs call self-asserted $CCENV and D-C guardrails, not a boundary.
+    # R13: the docs call self-asserted $ACTAS and D-C guardrails, not a boundary.
     def test_r13_docs_do_not_oversell_the_gate(self):
         agents = " ".join((REPO / "docs" / "agents.md").read_text().split())
         five = agents.split("## In five minutes")[1].split("```")[0]
@@ -1093,22 +1093,22 @@ class Round2(Sandbox):
     def test_r3c_equal_user_value_is_restored(self):
         f = self.sf("k")
         f.parent.mkdir()
-        f.write_text(json.dumps({"env": {"PLAIN": "ccenv"}, "theme": "dark"}))
+        f.write_text(json.dumps({"env": {"PLAIN": "actas"}, "theme": "dark"}))
         self.ok("sync", "k")
-        self.assertEqual(self.ledger()[str(f)]["prev"], {"env.PLAIN": "ccenv"})
+        self.assertEqual(self.ledger()[str(f)]["prev"], {"env.PLAIN": "actas"})
         self.drop_profile("k")
         self.ok("sync", "--clean")
-        self.assertEqual(json.loads(f.read_text()), {"env": {"PLAIN": "ccenv"}, "theme": "dark"})
+        self.assertEqual(json.loads(f.read_text()), {"env": {"PLAIN": "actas"}, "theme": "dark"})
 
-    # R5b: a record forged in a moved CCENV_STATE does not beat the fixed copy.
+    # R5b: a record forged in a moved ACTAS_STATE does not beat the fixed copy.
     def test_r5b_forged_record_in_a_moved_state_dir(self):
-        inrun, ccenv = self.in_run_a()
+        inrun, actas = self.in_run_a()
         evil = self.tmp / "evil"
         py = ("import json,sys;from pathlib import Path;us,evil=map(Path,sys.argv[1:]);"
               "r=json.loads(next(us.glob('*.json')).read_text());r.update(profile='b',state=str(evil));"
               "(evil/'sessions').mkdir(parents=True);(evil/'sessions'/(str(r['pid'])+'.json')).write_text(json.dumps(r))")
         text = inrun(f"{shlex.quote(sys.executable)} -c {shlex.quote(py)} {shlex.quote(str(self.user_sessions))} "
-                     f"{evil} && CCENV_STATE={evil} {ccenv} exec b -- true")
+                     f"{evil} && ACTAS_STATE={evil} {actas} exec b -- true")
         self.assertTrue(list((evil / "sessions").glob("*.json")))      # the forge was written
         self.assertIn("reason=override", text)
         self.assertIn("rc=3", text)
@@ -1119,7 +1119,7 @@ class Round2(Sandbox):
         self.assertNotIn("`TERM*`", manifest)
         self.assertIn("`TERM`, `TERM_*`", manifest)
         agents = " ".join((REPO / "docs" / "agents.md").read_text().split())
-        self.assertNotIn("Nothing else is reachable from a session started with `ccenv run`, not", agents)
+        self.assertNotIn("Nothing else is reachable from a session started with `actas run`, not", agents)
 
 
 

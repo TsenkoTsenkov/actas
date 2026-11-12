@@ -1,11 +1,14 @@
-# ccenv for direnv: put this in ~/.config/direnv/direnvrc, then add
-# `use ccenv` (or `use ccenv <profile>`) to a project's .envrc.
-use_ccenv() {
+# actas for direnv: put this in ~/.config/direnv/direnvrc, then add
+# `use actas` (or `use actas <profile>`) to a project's .envrc.
+use_actas() {
   local out
-  watch_file "${CCENV_ROOT:-$HOME/.config/ccenv}/environments.yaml"
-  out="$(ccenv --cwd "$PWD" shell ${1:+"$1"} --no-secrets --format direnv)" || {
-    log_error "ccenv failed"
+  watch_file "${ACTAS_ROOT:-${CCENV_ROOT:-$HOME/.config/actas}}/environments.yaml" \
+    "$HOME/.config/ccenv/environments.yaml"  # legacy: the pre-rename location
+  out="$(actas --cwd "$PWD" shell ${1:+"$1"} --no-secrets --format direnv)" || {
+    log_error "actas failed"
     return 1
   }
   eval "$out"
 }
+# Deprecated: `use ccenv`, the pre-rename name, keeps working.
+use_ccenv() { use_actas "$@"; }

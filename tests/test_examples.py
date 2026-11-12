@@ -12,7 +12,7 @@ import json
 import re
 import unittest
 
-from ccenv_testlib import REPO, Sandbox, has_yaml
+from actas_testlib import REPO, Sandbox, has_yaml
 
 TOP_KEYS = {"version", "defaults", "profiles", "roles", "fallback"}
 
@@ -36,7 +36,7 @@ class Examples(Sandbox):
         for name in cfg.profiles:
             prof = m.merge_profile(name, cfg)            # also checks provider requirements
             res = m.assemble(prof, want_secrets=False)
-            self.assertEqual(res["env"]["CCENV"], name)
+            self.assertEqual(res["env"]["ACTAS"], name)
             m.settings_for(prof, res)
             profs[name] = prof
         nodes = dict(cfg.roles)

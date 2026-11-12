@@ -9,7 +9,7 @@ import subprocess
 import sys
 import unittest
 
-from ccenv_testlib import SYSTEM_PATH, Sandbox, make_fakebin
+from actas_testlib import SYSTEM_PATH, Sandbox, make_fakebin
 
 V1 = {
     "version": 1,
@@ -109,14 +109,14 @@ class GitHelper(Base):  # D2, D29
                            "GIT_CONFIG_KEY_1": "c.d", "GIT_CONFIG_VALUE_1": "2"})
         env = self.m.assemble(self.m.resolve("partner"))["env"]
         self.assertEqual(env["GIT_CONFIG_COUNT"], "6")
-        self.assertEqual(env["CCENV_GIT_BASE"], "2")
+        self.assertEqual(env["ACTAS_GIT_BASE"], "2")
         self.assertEqual(env["GIT_CONFIG_KEY_2"], "user.name")
         self.assertNotIn("GIT_CONFIG_KEY_0", env)        # parent pairs kept, not rewritten
 
-    def test_nested_ccenv_truncates_to_base(self):
-        os.environ.update({"GIT_CONFIG_COUNT": "5", "CCENV_GIT_BASE": "1"})
+    def test_nested_actas_truncates_to_base(self):
+        os.environ.update({"GIT_CONFIG_COUNT": "5", "ACTAS_GIT_BASE": "1"})
         env = self.m.assemble(self.m.resolve("personal"))["env"]
-        self.assertEqual(env["CCENV_GIT_BASE"], "1")
+        self.assertEqual(env["ACTAS_GIT_BASE"], "1")
         self.assertEqual(env["GIT_CONFIG_KEY_1"], "user.name")
         self.assertEqual(env["GIT_CONFIG_COUNT"], str(1 + 4))
         child = self.m.child_env(self.m.assemble(self.m.resolve("client-a")),
@@ -155,8 +155,8 @@ class HelperPaths(Base):  # D8
                            env=dict(os.environ, PATH=""))
         self.assertEqual(r.stdout, "")   # no sops on an empty PATH (fallback disabled) ...
         r = subprocess.run(s["apiKeyHelper"], shell=True, capture_output=True, text=True,
-                           env=dict(os.environ, PATH="", CCENV_PATH_EXTRA=str(self.fakebin)))
-        self.assertEqual(r.stdout, "gw-secret")  # ... but CCENV_PATH_EXTRA finds it
+                           env=dict(os.environ, PATH="", ACTAS_PATH_EXTRA=str(self.fakebin)))
+        self.assertEqual(r.stdout, "gw-secret")  # ... but ACTAS_PATH_EXTRA finds it
 
     def test_aws_auth_refresh_uses_absolute_aws(self):
         s = self.m.settings_for(self.m.resolve("personal"))
@@ -310,7 +310,7 @@ class Secrets(Base):  # D22 D31 --value-stdin
         env = res["env"]
         self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
         self.assertIn("secret corp.token is not set", err)
-        self.assertIn("ccenv secret corp token --set", err)
+        self.assertIn("actas secret corp token --set", err)
 
     def test_set_uses_value_stdin(self):
         r = self.cli("secret", "partner", "new_key", "--set", stdin="s3cret-value\n")

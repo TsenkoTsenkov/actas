@@ -1,92 +1,102 @@
-# ccenv
+# actas
 
-[![test](https://github.com/TsenkoTsenkov/ccenv/actions/workflows/test.yml/badge.svg)](https://github.com/TsenkoTsenkov/ccenv/actions/workflows/test.yml)
+[![test](https://github.com/TsenkoTsenkov/actas/actions/workflows/test.yml/badge.svg)](https://github.com/TsenkoTsenkov/actas/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
 
-**Credential context env: the right accounts for every project, in every terminal and agent.**
+**actas — act as the right identity (LLM provider, cloud accounts, GitHub, git, secrets) for every
+project, in every terminal and agent.**
+
+```console
+$ actas exec client-a -- terraform apply     # act as client-a for one command
+```
 
 You work for several clients, on personal projects and on open source. Each
 context has its own LLM provider (a claude.ai subscription, a company gateway,
 Bedrock, Vertex), its own AWS, GCP or Azure account, its own GitHub account and
-git identity, and its own tokens. ccenv keeps all of that in one manifest. It
+git identity, and its own tokens. actas keeps all of that in one manifest. It
 picks the profile from the directory you are in and applies it to **one
 process**: Claude Code, Codex, Gemini CLI, `terraform`, `aws`, or any other
 command.
 
-[![ccenv demo: one manifest of profiles and roles; two terminals side by side as different accounts; an agent refused a more powerful profile; the human approving it in their own terminal](docs/demo/ccenv-demo.gif)](docs/demo/ccenv-demo.mp4)
+[![actas demo: one manifest of profiles and roles; two terminals side by side as different accounts; an agent refused a more powerful profile; the human approving it in their own terminal](docs/demo/actas-demo.gif)](docs/demo/actas-demo.mp4)
 
 _One manifest, two terminals running as two different accounts at once, any
 agent or CLI, `status --why`, and an agent that is refused a more powerful
 profile until you approve it in your own terminal. Dummy data, about 80
-seconds; click it for the sharper [MP4 version](docs/demo/ccenv-demo.mp4) · [how the demo is made](docs/demo/README.md)_
+seconds; click it for the sharper [MP4 version](docs/demo/actas-demo.mp4) · [how the demo is made](docs/demo/README.md)_
 
 ```console
 $ cd ~/code/client-a/api
-$ ccenv run
-ccenv: cleared from your shell: ANTHROPIC_API_KEY, AWS_ACCESS_KEY_ID
-ccenv: client-a · standard · gateway · aws:client-a-dev · gh:ada-client-a
+$ actas run
+actas: cleared from your shell: ANTHROPIC_API_KEY, AWS_ACCESS_KEY_ID
+actas: client-a · standard · gateway · aws:client-a-dev · gh:ada-client-a
 
-$ ccenv exec -- aws sts get-caller-identity     # any command, same identity
-$ ccenv run -t codex                              # another agent, same identity
+$ actas exec -- aws sts get-caller-identity     # any command, same identity
+$ actas run -t codex                              # another agent, same identity
 ```
 
 - **Works with any CLI or agent.** Claude Code is first-class: providers,
   settings, permission rules, and Desktop and IDE support. Codex and Gemini
   CLI get their own login home per account. Everything else runs through
-  `ccenv exec`.
+  `actas exec`.
 - **Nothing global changes when you run a profile.** No `gh auth switch`, no
   edits to `~/.gitconfig` or `~/.aws/config`. Two terminals can be two different people in two
   different accounts at the same time.
 - **No secrets in the clear.** The manifest holds references such as
-  `keychain:ccenv/client-a` or `sops:client-a/token`. They are resolved at
+  `keychain:actas/client-a` or `sops:client-a/token`. They are resolved at
   launch or when used, and never written to a file in clear text.
 - **Agent-aware.** Agents get rules tied to the profile's privilege level, and
-  ccenv refuses to let an agent switch itself to a more powerful profile.
+  actas refuses to let an agent switch itself to a more powerful profile.
 - **One file, standard library only.** A single Python 3.9+ script. Runs on
   macOS and Linux, and on Windows through WSL.
 
 > [!NOTE]
-> ccenv 2.0 is in beta: `main` is `2.0.0b1` and no release is tagged yet, so
+> actas 2.0 is in beta: `main` is `2.0.0b1` and no release is tagged yet, so
 > install from git (below). v1 manifests keep working unchanged; see
-> [Upgrading from v1](#upgrading-from-v1).
+> [Upgrading from v1](#upgrading-from-v1). actas was called ccenv until 2.0, and
+> an existing ccenv setup keeps working once `actas` is on your PATH and an
+> installed ccenv skill is replaced: see
+> [Coming from ccenv](docs/migration.md#coming-from-ccenv).
 
 [Install](#install) · [Quick start](#quick-start) · [Common setups](#common-setups) · [Roles and levels](#roles-levels-and-permission-sets) · [AI agents](#ai-agents) · [Where it works](#where-it-works) · [How it compares](#how-it-compares) · [Docs](#documentation) · [Upgrading from v1](#upgrading-from-v1)
 
 ## Install
 
-ccenv is a single Python 3.9+ file. Until the first 2.0 release is tagged,
+actas is a single Python 3.9+ file. Until the first 2.0 release is tagged,
 install it from git with uv or pipx. This install includes PyYAML, so YAML
 manifests work out of the box.
 
 ```bash
-uv tool install git+https://github.com/TsenkoTsenkov/ccenv
-pipx install git+https://github.com/TsenkoTsenkov/ccenv
+uv tool install git+https://github.com/TsenkoTsenkov/actas
+pipx install git+https://github.com/TsenkoTsenkov/actas
 ```
 
-Update with `uv tool upgrade ccenv` (or `pipx upgrade ccenv`). Remove with
-`uv tool uninstall ccenv`. Your configuration in `~/.config/ccenv` is left
-alone.
+Update with `uv tool upgrade actas` (or `pipx upgrade actas`). Remove with
+`uv tool uninstall actas`. Your configuration in `~/.config/actas` is left
+alone. Installed as `ccenv` before the rename? Run `uv tool uninstall ccenv`
+first, then the install line above (it installs both `actas` and the `ccenv`
+alias).
 
 **A git checkout with a symlink.** Update with `git pull`.
 
 ```bash
-git clone https://github.com/TsenkoTsenkov/ccenv ~/.local/share/ccenv
+git clone https://github.com/TsenkoTsenkov/actas ~/.local/share/actas
 mkdir -p ~/.local/bin
-ln -s ~/.local/share/ccenv/bin/ccenv ~/.local/bin/ccenv    # any directory on your PATH
+ln -s ~/.local/share/actas/bin/actas ~/.local/bin/actas    # any directory on your PATH
 ```
 
-ccenv is not on PyPI or Homebrew; use one of the methods above.
+actas is not on PyPI or Homebrew; use one of the methods above.
 
 <details>
 <summary>install.sh (once a release is tagged)</summary>
 
 It downloads the single-file release, checks its SHA-256 and installs it as
-`~/.local/bin/ccenv`. It never uses sudo, and it refuses to write through a
+`~/.local/bin/actas`. It never uses sudo, and it refuses to write through a
 symlink. No release is tagged yet, so this does not work today.
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/TsenkoTsenkov/ccenv/main/install.sh
+curl -fsSLO https://raw.githubusercontent.com/TsenkoTsenkov/actas/main/install.sh
 sh install.sh --version v2.0.0b1        # a prerelease is installed only by name
 ```
 
@@ -104,8 +114,8 @@ Command Line Tools; Linux distributions ship it. Everything else is optional:
 
 | Tool | Needed for |
 |---|---|
-| PyYAML or `yq` (mikefarah/yq, or Debian/Ubuntu's `yq` package) | a YAML manifest. The uv/pipx install includes PyYAML. Otherwise use `brew install yq` (macOS), `sudo apt install python3-yaml` or `yq` (Debian/Ubuntu), or `python3 -m pip install --user pyyaml` where pip allows it. Without a parser, write the manifest as JSON; `ccenv doctor` says which parser is missing. |
-| [Claude Code](https://code.claude.com), `codex`, `gemini` | `ccenv run` with that tool |
+| PyYAML or `yq` (mikefarah/yq, or Debian/Ubuntu's `yq` package) | a YAML manifest. The uv/pipx install includes PyYAML. Otherwise use `brew install yq` (macOS), `sudo apt install python3-yaml` or `yq` (Debian/Ubuntu), or `python3 -m pip install --user pyyaml` where pip allows it. Without a parser, write the manifest as JSON; `actas doctor` says which parser is missing. |
+| [Claude Code](https://code.claude.com), `codex`, `gemini` | `actas run` with that tool |
 | `aws`, `gcloud`, `az`, `gh` | that module's logins and probes |
 | `sops` + `age` | `sops:` secrets |
 | `op` | `op://` secrets |
@@ -122,26 +132,26 @@ need it):
 brew install sops age                     # or your package manager
 mkdir -p ~/.config/sops/age
 age-keygen -o ~/.config/sops/age/keys.txt && chmod 600 ~/.config/sops/age/keys.txt
-ccenv init                                # writes ~/.config/ccenv/.sops.yaml for that key
-ccenv secret set sops:client-a/token      # prompted
+actas init                                # writes ~/.config/actas/.sops.yaml for that key
+actas secret set sops:client-a/token      # prompted
 ```
 
 </details>
 
-Your configuration lives in `~/.config/ccenv` (`CCENV_ROOT`), separate from
+Your configuration lives in `~/.config/actas` (`ACTAS_ROOT`), separate from
 this repository. Keep it private.
 
 ## Quick start
 
 This takes about a minute.
 
-**1. Create the config directory.** `ccenv init` writes a short, commented
-version 2 starter to `~/.config/ccenv/environments.yaml`. It never overwrites
+**1. Create the config directory.** `actas init` writes a short, commented
+version 2 starter to `~/.config/actas/environments.yaml`. It never overwrites
 an existing file, and it works without sops. It writes YAML when PyYAML or
 `yq` is available (the uv/pipx install includes PyYAML) and JSON otherwise.
 
 ```bash
-ccenv init
+actas init
 ```
 
 **2. Describe your contexts.** Replace the starter with something like this
@@ -161,11 +171,11 @@ profiles:
     git:    { name: Ada Example, email: ada@client-a.example }
     github: { auth: "gh:ada-client-a" }
     aws:    { profile: client-a-dev, region: eu-west-1 }
-    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:ccenv/client-a" }
+    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:actas/client-a" }
 ```
 
 - `match`: the directories this profile applies to, including subdirectories. Globs work, and the longest match wins.
-- `github.auth: "gh:<login>"`: an account you already signed in to with `gh auth login`. ccenv reads its token without switching gh's active account.
+- `github.auth: "gh:<login>"`: an account you already signed in to with `gh auth login`. actas reads its token without switching gh's active account.
 - `aws.profile`: a profile from `~/.aws/config`.
 - `claude`: the default is your claude.ai subscription. Here `client-a` uses the client's LLM gateway, with the token in the macOS Keychain.
 
@@ -173,7 +183,7 @@ profiles:
 history or in `ps`.
 
 ```bash
-ccenv secret set keychain:ccenv/client-a
+actas secret set keychain:actas/client-a
 ```
 
 On Linux, use a `sops:`, `op://` or `cmd:` ref instead (see
@@ -182,28 +192,28 @@ On Linux, use a `sops:`, `op://` or `cmd:` ref instead (see
 **4. Check, then launch.**
 
 ```bash
-ccenv status --cwd ~/code/client-a    # which profile applies there, and what it sets
-ccenv doctor                          # tools, manifest problems, leaking shell exports
-cd ~/code/client-a && ccenv run       # Claude Code as client-a
+actas status --cwd ~/code/client-a    # which profile applies there, and what it sets
+actas doctor                          # tools, manifest problems, leaking shell exports
+cd ~/code/client-a && actas run       # Claude Code as client-a
 ```
 
-`ccenv status --why` shows where each value comes from. `ccenv list` shows
+`actas status --why` shows where each value comes from. `actas list` shows
 every profile.
 
 ## Common setups
 
 **Two claude.ai subscriptions.** `claude.home` gives a profile its own Claude
 Code login, settings and history (through `CLAUDE_CONFIG_DIR`). Run `/login`
-once inside its first session. This works wherever ccenv sets the environment:
-`ccenv run`, `ccenv exec`, or a shell after `eval "$(ccenv shell work)"`.
-Claude Desktop, the IDE extensions and a bare `claude` started without ccenv's
+once inside its first session. This works wherever actas sets the environment:
+`actas run`, `actas exec`, or a shell after `eval "$(actas shell work)"`.
+Claude Desktop, the IDE extensions and a bare `claude` started without actas's
 environment keep the app's single login (one claude.ai account per app; see
 [docs/desktop.md](docs/desktop.md)).
 
 ```yaml
   work:
     match: ~/code/oss-work
-    claude: { home: work }      # ~/.local/state/ccenv/homes/claude/work
+    claude: { home: work }      # ~/.local/state/actas/homes/claude/work
 ```
 
 A new home starts empty: it has none of your main home's user settings,
@@ -216,7 +226,7 @@ the client email. A repo cloned over SSH (`git@github.com:…`) pushes with
 whatever key `ssh` picks, usually your personal one: add
 `git: { ssh_key: ~/.ssh/id_ed25519_client_a }` to the profile, which makes git
 use only that key. A stray `AWS_ACCESS_KEY_ID` or `ANTHROPIC_API_KEY` in your
-shell cannot leak in: ccenv clears the variables of every module your
+shell cannot leak in: actas clears the variables of every module your
 manifest uses, unless the profile sets them.
 
 **No cloud account at all.** `aws: null` in a profile makes the AWS CLI see an
@@ -273,12 +283,12 @@ becomes PowerUser. It has no `match`, so it never applies by directory. You
 use it by name, one command at a time:
 
 ```console
-$ ccenv exec personal-power -- terraform apply
+$ actas exec personal-power -- terraform apply
 Elevate this shell -> personal-power (power) to run: terraform apply.
 Type the profile name to continue:
 ```
 
-`ccenv status personal-power --why` shows where each value comes from:
+`actas status personal-power --why` shows where each value comes from:
 
 ```text
 chain     defaults -> gh-personal-ro -> aws-personal-ro -> no-pulumi -> personal -> aws-personal-power -> personal-power
@@ -286,8 +296,8 @@ chain     defaults -> gh-personal-ro -> aws-personal-ro -> no-pulumi -> personal
           aws.region = eu-west-1 (from aws-personal-ro)
 ```
 
-**Built-in agent rules per level.** ccenv renders these as Claude Code
-permission rules. "allow" means no rule is added; ccenv never adds allow
+**Built-in agent rules per level.** actas renders these as Claude Code
+permission rules. "allow" means no rule is added; actas never adds allow
 rules.
 
 | | readonly | standard | power |
@@ -295,8 +305,8 @@ rules.
 | edit local files | allow | allow | allow |
 | `git push`, `gh pr merge`, `gh release` | deny | ask | allow |
 | `terraform apply`, `kubectl apply`, `cdk deploy`, `aws * delete-*`, … | deny | ask | ask |
-| read secrets (`ccenv secret`, `sops`, `gh auth token`, credential files) | deny | deny | deny |
-| `ccenv exec`, `run`, `login`, `sync` | ask | ask | ask |
+| read secrets (`actas secret`, `sops`, `gh auth token`, credential files) | deny | deny | deny |
+| `actas exec`, `run`, `login`, `sync` | ask | ask | ask |
 
 "Readonly" means read-only toward remote systems and credentials. It is not
 plan mode: local edits are allowed. `permissions.builtin: false` turns the
@@ -315,7 +325,7 @@ built-in rules off for a profile; your own `deny`/`ask` lists still apply.
    uses. A profile that declares `level: readonly` but uses a `power` role is
    an error.
 4. **A secret is always `scheme:path`.** For example `sops:client-a/token`,
-   `keychain:ccenv/gw`, `op://vault/item/field`, `gh:ada-personal` or
+   `keychain:actas/gw`, `op://vault/item/field`, `gh:ada-personal` or
    `cmd:["pass", "show", "x"]`. A bare value where a secret is expected is an
    error.
 
@@ -325,14 +335,14 @@ schema, merge rules and every key: [docs/manifest.md](docs/manifest.md).
 Complete examples: [examples/environments.yaml](examples/environments.yaml)
 and [examples/minimal.yaml](examples/minimal.yaml) (the quick-start manifest).
 
-## What ccenv supports
+## What actas supports
 
 ### Modules
 
 | Key | What it sets | Notes |
 |---|---|---|
-| `aws` | `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`, optional `AWS_CONFIG_FILE` | `ccenv login` runs `aws sso login`; Claude Code gets `awsAuthRefresh` |
-| `gcp` | `CLOUDSDK_*` project, region, configuration and impersonation; `home:` gives an isolated gcloud config | `ccenv login --module gcp [--adc]` |
+| `aws` | `AWS_PROFILE`, `AWS_REGION`, `AWS_DEFAULT_REGION`, optional `AWS_CONFIG_FILE` | `actas login` runs `aws sso login`; Claude Code gets `awsAuthRefresh` |
+| `gcp` | `CLOUDSDK_*` project, region, configuration and impersonation; `home:` gives an isolated gcloud config | `actas login --module gcp [--adc]` |
 | `azure` | `ARM_SUBSCRIPTION_ID`, `ARM_TENANT_ID`; `home:` gives an isolated `AZURE_CONFIG_DIR` | Without `home`, `az` keeps using `~/.azure`'s current subscription; only Terraform is pinned |
 | `github` | `GH_TOKEN`/`GITHUB_TOKEN` (or the Enterprise variables) and a git credential helper for HTTPS | `auth: "gh:<login>[@host]"` or any secret ref; `home:` gives an isolated `gh` login |
 | `git` | name, email, SSH key, signing, per-URL credentials, raw config | Set per process through `GIT_CONFIG_*`; `~/.gitconfig` is never touched |
@@ -348,9 +358,9 @@ kube, Terraform Cloud, Vault, …) is a role built from `env`, `secret_env` and
 | `tool:` | Support |
 |---|---|
 | `claude` (default) | Providers `subscription`, `gateway`, `api-key`, `bedrock` and `vertex`. A separate login per `claude.home`. Generated settings with permission rules, and a SessionStart note that tells Claude which profile it is in. The gateway token reaches Claude through `apiKeyHelper` and is not exported. |
-| `codex` | `codex.home` gives each account its own `CODEX_HOME`. `ccenv login` signs in with ChatGPT, or pipes an API key on stdin. Nothing secret is exported. Permission rules are not rendered for Codex yet. |
+| `codex` | `codex.home` gives each account its own `CODEX_HOME`. `actas login` signs in with ChatGPT, or pipes an API key on stdin. Nothing secret is exported. Permission rules are not rendered for Codex yet. |
 | `gemini` | `gemini.home`, an API key or Vertex. `--approval-mode` follows the level: `auto_edit` for power, `default` otherwise. |
-| anything else | `ccenv exec <profile> -- <command>`: Cursor, Copilot CLI, Aider, opencode, Goose, or any CLI. |
+| anything else | `actas exec <profile> -- <command>`: Cursor, Copilot CLI, Aider, opencode, Goose, or any CLI. |
 
 Codex and Gemini are supported at the environment level in 2.0. Some details
 (Codex's environment filter and API-key login, Gemini's Vertex variable) are
@@ -358,9 +368,9 @@ not yet verified against the real tools.
 
 ### Secret schemes
 
-| Ref | Backend | `ccenv secret set` |
+| Ref | Backend | `actas secret set` |
 |---|---|---|
-| `sops:<group>/<key>` | `~/.config/ccenv/secrets.enc.yaml`, encrypted with [sops](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age), decrypted once per launch | yes (prompted or piped; passed to sops on stdin when it supports `--value-stdin`, see [secret references](docs/manifest.md#secret-references)) |
+| `sops:<group>/<key>` | `~/.config/actas/secrets.enc.yaml`, encrypted with [sops](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age), decrypted once per launch | yes (prompted or piped; passed to sops on stdin when it supports `--value-stdin`, see [secret references](docs/manifest.md#secret-references)) |
 | `keychain:<service>/<account>` | the macOS Keychain | yes (`security` prompts for the value) |
 | `op://vault/item/field` | the 1Password CLI (`op read`) | no, use `op` |
 | `gh:<login>[@host]` | the token `gh` stores for that account | no, use `gh auth login` |
@@ -377,48 +387,48 @@ configuration. The full matrix is in
 
 | Surface | How | What it does not get |
 |---|---|---|
-| Terminal | `ccenv run` (Claude, Codex, Gemini) or `ccenv exec` (anything) | Nothing: everything applies. |
-| Bare `claude`, IDE extensions, Claude Desktop (local sessions) | `ccenv sync` writes `.claude/settings.local.json` in each matching repo; `ccenv desktop <p> --print-3p` / `--vscode` print the app-wide gateway and VS Code blocks | `secret_env` values; with `github.auth`, a GitHub token (`gh` is logged out there; HTTPS `git push` still works through the helper); `claude.home`; `confirm` profiles unless `--include-confirm`. Desktop has one claude.ai account and one provider for the whole app. |
-| Remote Control | as the local session it drives (`ccenv run` or `sync`) | Gateway, API-key, Bedrock and Vertex profiles (`ccenv list` shows `remote=`). |
-| Cloud sessions (claude.ai/code) | Subscription only. For AWS, run `ccenv aws-handoff` in your terminal and paste the short-lived credentials | Local files, gateways, API keys, Bedrock/Vertex. |
-| Other GUI apps, shells, direnv | `ccenv exec <p> -- <app binary>`, `eval "$(ccenv shell)"`, or `use ccenv` with [contrib/direnvrc](contrib/direnvrc) | `--format env` and direnv get non-secret values only. Under direnv, git over HTTPS uses the profile's account, but `gh` acts as whichever account is active in gh's keyring; use `ccenv exec` or `github.home` for a per-profile `gh`. |
+| Terminal | `actas run` (Claude, Codex, Gemini) or `actas exec` (anything) | Nothing: everything applies. |
+| Bare `claude`, IDE extensions, Claude Desktop (local sessions) | `actas sync` writes `.claude/settings.local.json` in each matching repo; `actas desktop <p> --print-3p` / `--vscode` print the app-wide gateway and VS Code blocks | `secret_env` values; with `github.auth`, a GitHub token (`gh` is logged out there; HTTPS `git push` still works through the helper); `claude.home`; `confirm` profiles unless `--include-confirm`. Desktop has one claude.ai account and one provider for the whole app. |
+| Remote Control | as the local session it drives (`actas run` or `sync`) | Gateway, API-key, Bedrock and Vertex profiles (`actas list` shows `remote=`). |
+| Cloud sessions (claude.ai/code) | Subscription only. For AWS, run `actas aws-handoff` in your terminal and paste the short-lived credentials | Local files, gateways, API keys, Bedrock/Vertex. |
+| Other GUI apps, shells, direnv | `actas exec <p> -- <app binary>`, `eval "$(actas shell)"`, or `use actas` with [contrib/direnvrc](contrib/direnvrc) | `--format env` and direnv get non-secret values only. Under direnv, git over HTTPS uses the profile's account, but `gh` acts as whichever account is active in gh's keyring; use `actas exec` or `github.home` for a per-profile `gh`. |
 
 ## AI agents
 
 Credentials follow the **session**, not the directory. An agent started by
-`ccenv run` stays anchored to that profile, even if it `cd`s elsewhere.
+`actas run` stays anchored to that profile, even if it `cd`s elsewhere.
 
-- An agent checks its identity with `ccenv status --json`. `"mismatch": true`
+- An agent checks its identity with `actas status --json`. `"mismatch": true`
   means the current directory is matched to another profile (a directory
   only the `fallback:` covers is no mismatch).
 - An agent can use another profile only through
-  `ccenv exec <profile> --reason "…" -- <cmd>`, and only if the session's
+  `actas exec <profile> --reason "…" -- <cmd>`, and only if the session's
   profile lists it in `agents_may_use` at the same or a lower level. `confirm`
   profiles always need a human.
-- Every refusal starts with a `ccenv-stop:` line and includes a ready-to-run
+- Every refusal starts with an `actas-stop:` line and includes a ready-to-run
   command. You run it yourself in a separate terminal. There is no in-session
   approval and no bypass variable.
 - Logins, `sync`, `init`, `aws-handoff`, `migrate --write`, writing secrets
   and `shell` with secrets are human-only. Runs, execs, logins and refusals
-  are logged to `~/.local/state/ccenv/audit.jsonl` (names, never values).
+  are logged to `~/.local/state/actas/audit.jsonl` (names, never values).
 
 ```text
-ccenv-stop: code=needs_user reason=confirm profile=personal-power
-ccenv: refused: personal-power requires a typed confirmation, which only a human in a terminal can give
-ccenv: show the user this ask_user text exactly, then stop:
-The agent wants to run `terraform apply` as ccenv profile personal-power (power; aws:personal-poweruser, gh:pat).
+actas-stop: code=needs_user reason=confirm profile=personal-power
+actas: refused: personal-power requires a typed confirmation, which only a human in a terminal can give
+actas: show the user this ask_user text exactly, then stop:
+The agent wants to run `terraform apply` as actas profile personal-power (power; aws:personal-poweruser, gh:pat).
 Agent's reason: "apply the reviewed plan"
 If you agree, run it yourself in a separate terminal (not inside the agent session):
-  ccenv exec personal-power -- terraform apply
+  actas exec personal-power -- terraform apply
 ```
 
-To teach an agent the rules, run `ccenv instructions` and add the output to
+To teach an agent the rules, run `actas instructions` and add the output to
 your project's `AGENTS.md` (for Claude Code, also add `@AGENTS.md` to
 `CLAUDE.md`).
 
-**Agent skills.** [skills/ccenv](skills/ccenv/SKILL.md) teaches Claude Code to
+**Agent skills.** [skills/actas](skills/actas/SKILL.md) teaches Claude Code to
 check its identity before cloud or GitHub commands (copy it to
-`~/.claude/skills/ccenv`). [skills/aws-handoff](skills/aws-handoff/SKILL.md)
+`~/.claude/skills/actas`). [skills/aws-handoff](skills/aws-handoff/SKILL.md)
 is a `/aws-handoff` command for cloud sessions.
 
 **These guardrails are a seatbelt, not a boundary.** They stop a confused or
@@ -429,68 +439,68 @@ ReadOnlyAccess role. [docs/agents.md](docs/agents.md) covers the threat model,
 the full gate rules and stronger options. If you are an agent working on this
 repository, read [AGENTS.md](AGENTS.md).
 
-If you point ccenv at another config with `CCENV_ROOT` or `CCENV_STATE`, set
+If you point actas at another config with `ACTAS_ROOT` or `ACTAS_STATE`, set
 them per command rather than exporting them: exported to a non-default place,
-they make agents without a `ccenv run` session refuse every `ccenv exec` with
+they make agents without an `actas run` session refuse every `actas exec` with
 `reason=override` ([details](docs/agents.md#the-gate)).
 
 ## How it compares
 
-| You may already use | What it does | What ccenv adds |
+| You may already use | What it does | What actas adds |
 |---|---|---|
-| direnv, mise `[env]` | per-directory variables in your interactive shell | one identity per process (two terminals, two accounts), secret refs resolved at launch, agent rules. They combine: `use ccenv` in `.envrc` |
+| direnv, mise `[env]` | per-directory variables in your interactive shell | one identity per process (two terminals, two accounts), secret refs resolved at launch, agent rules. They combine: `use actas` in `.envrc` |
 | cc-switch, claude-switch and other Claude account switchers | switch which provider or account Claude Code (and often Codex or Gemini CLI) uses | the same switch for the cloud accounts, GitHub, git identity and secrets of that context, per process, with rules that stop an agent from switching itself up |
 | aws-vault, granted | AWS credentials | the same idea for the LLM provider, GitHub, git, GCP and Azure. Set `aws.profile` to an AWS profile whose `credential_process` uses them |
 | `gh auth switch`, `gcloud config set`, `az account set` | switch the account for every terminal at once | per-process accounts; nothing global changes |
-| 1Password shell plugins, fnox, sops | supply secrets | which secrets belong to which context; ccenv reads them through `op://`, `cmd:` and `sops:` refs |
+| 1Password shell plugins, fnox, sops | supply secrets | which secrets belong to which context; actas reads them through `op://`, `cmd:` and `sops:` refs |
 
-**When ccenv is not the right tool:** you need an enforced sandbox around an
+**When actas is not the right tool:** you need an enforced sandbox around an
 untrusted agent (the agent rules are a seatbelt; use a
 [devcontainer or VM](docs/recipes.md#stronger-isolation-devcontainer-or-vm),
-with ccenv inside if you like), you use one account everywhere, or you are on
+with actas inside if you like), you use one account everywhere, or you are on
 native Windows (WSL only). Using them together:
 [docs/recipes.md](docs/recipes.md#direnv-mise-and-aws-credential-tools).
 
 ## Commands
 
-`ccenv help` shows the everyday commands; `ccenv help <command>` lists a
-command's flags, `ccenv help manifest` and `ccenv help agents` give short
-primers, and `ccenv --help` lists everything. `--cwd DIR` works with any command
+`actas help` shows the everyday commands; `actas help <command>` lists a
+command's flags, `actas help manifest` and `actas help agents` give short
+primers, and `actas --help` lists everything. `--cwd DIR` works with any command
 and resolves the profile as if you were in `DIR`; it wins over the session's
 profile in `status`, `exec` and `run`. Arguments after `--` go to
-the launched tool: `ccenv run client-a -- --resume`.
+the launched tool: `actas run client-a -- --resume`.
 
 **Everyday**
 
 | Command | What it does |
 |---|---|
-| `ccenv init` | Create `~/.config/ccenv` with a starter manifest (and a `.sops.yaml` when an age key exists). Never overwrites. |
-| `ccenv run [profile] [-t claude\|codex\|gemini] [--login] [-- args]` | Launch the profile's tool with its identity. Warns about expired AWS credentials; logs in only with `--login`. |
-| `ccenv exec [profile] [--reason TEXT] -- cmd …` | Run any command with a profile's identity. Returns the command's own exit code. |
-| `ccenv status [profile] [--why] [--probe] [--json]` | Which profile applies and what it sets. `--why`: the `use:` chain and where each value comes from. `--probe`: check each login. Alias: `whoami`. |
-| `ccenv list [--check] [--json]` | All profiles and roles. `--check` also probes AWS and gateway secrets. |
-| `ccenv login [profile] [--module M] [--all]` | Log in: AWS SSO by default (plus Codex for Codex profiles). `--module gcp\|azure\|github\|codex` (for a `gh:` account, gh's previously active account is switched back afterwards). `--all`: one AWS login per SSO session or portal. |
-| `ccenv sync [profile] [--dry-run] [--clean [--force]] [--include-confirm]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what ccenv wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing). `--include-confirm` also writes `confirm` profiles. |
-| `ccenv doctor [--strict] [--json] [--fix]` | Check tools, the manifest, file modes, and the shell exports `run` would clear. `--fix` only tightens ccenv's own directories to 0700. |
+| `actas init` | Create `~/.config/actas` with a starter manifest (and a `.sops.yaml` when an age key exists). Never overwrites. |
+| `actas run [profile] [-t claude\|codex\|gemini] [--login] [-- args]` | Launch the profile's tool with its identity. Warns about expired AWS credentials; logs in only with `--login`. |
+| `actas exec [profile] [--reason TEXT] -- cmd …` | Run any command with a profile's identity. Returns the command's own exit code. |
+| `actas status [profile] [--why] [--probe] [--json]` | Which profile applies and what it sets. `--why`: the `use:` chain and where each value comes from. `--probe`: check each login. Alias: `whoami`. |
+| `actas list [--check] [--json]` | All profiles and roles. `--check` also probes AWS and gateway secrets. |
+| `actas login [profile] [--module M] [--all]` | Log in: AWS SSO by default (plus Codex for Codex profiles). `--module gcp\|azure\|github\|codex` (for a `gh:` account, gh's previously active account is switched back afterwards). `--all`: one AWS login per SSO session or portal. |
+| `actas sync [profile] [--dry-run] [--clean [--force]] [--include-confirm]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what actas wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing). `--include-confirm` also writes `confirm` profiles. |
+| `actas doctor [--strict] [--json] [--fix]` | Check tools, the manifest, file modes, and the shell exports `run` would clear. `--fix` only tightens actas's own directories to 0700. |
 
 **Advanced**
 
 | Command | What it does |
 |---|---|
-| `ccenv shell [profile] [--format sh\|fish\|direnv\|json\|env] [--no-secrets]` | Print the environment, for `eval "$(ccenv shell)"`, direnv or a GUI app. |
-| `ccenv secret set REF` / `ccenv secret --ref REF` | Store a secret (prompted, or from stdin), or print one (helpers use this). |
-| `ccenv desktop [profile] [--print-3p] [--vscode]` | What reaches Claude Desktop and IDEs, plus blocks to paste there. |
-| `ccenv instructions [--agent claude\|codex\|gemini\|generic] [--direnv]` | Print the agent rules, or the direnv function. |
-| `ccenv migrate [--write]` | Print a v1 manifest as version 2. `--write` replaces it and keeps the old file. |
-| `ccenv aws-handoff [profile] [--stdout] [--login]` | Copy short-lived AWS credentials for a cloud session. |
+| `actas shell [profile] [--format sh\|fish\|direnv\|json\|env] [--no-secrets]` | Print the environment, for `eval "$(actas shell)"`, direnv or a GUI app. |
+| `actas secret set REF` / `actas secret --ref REF` | Store a secret (prompted, or from stdin), or print one (helpers use this). |
+| `actas desktop [profile] [--print-3p] [--vscode]` | What reaches Claude Desktop and IDEs, plus blocks to paste there. |
+| `actas instructions [--agent claude\|codex\|gemini\|generic] [--direnv]` | Print the agent rules, or the direnv function. |
+| `actas migrate [--write]` | Print a v1 manifest as version 2. `--write` replaces it and keeps the old file. |
+| `actas aws-handoff [profile] [--stdout] [--login]` | Copy short-lived AWS credentials for a cloud session. |
 
-Exit codes: `0` ok, `1` error, `2` usage, `3` needs the user (a `ccenv-stop:`
+Exit codes: `0` ok, `1` error, `2` usage, `3` needs the user (an `actas-stop:`
 refusal), `4` credentials expired. Apart from these, `exec` and `run` return
 the tool's own exit code.
 
 ## Documentation
 
-- [docs/manifest.md](docs/manifest.md): every key, merge rules, modules, secret references, validation, and the files ccenv uses
+- [docs/manifest.md](docs/manifest.md): every key, merge rules, modules, secret references, validation, and the files actas uses
 - [docs/recipes.md](docs/recipes.md): GitLab, npm, Docker, Kubernetes, Terraform Cloud, Vault, other agents, direnv and mise, written as roles
 - [docs/agents.md](docs/agents.md): levels and rules, the gate, refusals, the audit log, the threat model
 - [docs/desktop.md](docs/desktop.md): bare `claude`, IDE extensions, Claude Desktop, cloud sessions, Cursor and other GUI apps
@@ -524,8 +534,8 @@ environment has an `aws:` block, so elsewhere your shell's `AWS_PROFILE`
 stays, as in v1).
 
 ```bash
-ccenv migrate            # print the v2 version and list what would change
-ccenv migrate --write    # switch; the old file is kept as environments.v1.yaml
+actas migrate            # print the v2 version and list what would change
+actas migrate --write    # switch; the old file is kept as environments.v1.yaml
 ```
 
 `migrate` keeps your existing sops paths (`sops:<env>/<key>`) and never reads
@@ -543,7 +553,7 @@ python3 -m unittest discover -s tests -v
 uv run --no-project --python 3.9 python -m unittest discover -s tests    # oldest supported Python
 ```
 
-Each test gets its own temporary `HOME`, `CCENV_ROOT`, `CCENV_STATE` and XDG
+Each test gets its own temporary `HOME`, `ACTAS_ROOT`, `ACTAS_STATE` and XDG
 directories, and `PATH` points at fake `gh`, `aws`, `sops`, `security`, `op`,
 `gcloud`, `az`, `claude`, `codex` and `gemini` binaries. CI runs on Ubuntu and
 macOS with Python 3.10 and 3.13, plus Python 3.9 through uv, and builds the

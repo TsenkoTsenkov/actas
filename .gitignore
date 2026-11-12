@@ -1,4 +1,4 @@
-# This repo is the tool only. Personal configuration lives in ~/.config/ccenv
+# This repo is the tool only. Personal configuration lives in ~/.config/actas
 # and must never be committed here.
 /environments.yaml
 /environments.json
@@ -9,7 +9,7 @@
 keys.txt
 age-key*.txt
 
-# Local Claude Code settings (written by `ccenv sync`)
+# Local Claude Code settings (written by `actas sync`)
 .claude/settings.local.json
 
 __pycache__/

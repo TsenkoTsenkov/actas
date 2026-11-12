@@ -18,18 +18,18 @@ import re
 import shlex
 import unittest
 
-from ccenv_testlib import REPO, V1_BIN, Sandbox, has_yaml, load_module
+from actas_testlib import REPO, V1_BIN, Sandbox, has_yaml, load_module
 
 MISSING = "<missing>"
 V1_HELPER = ('!f(){ test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" '
              '"$GH_TOKEN"; }; f')
-ADDED_VARS = {"CCENV_LEVEL", "CCENV_SESSION", "CCENV_AGENT", "CCENV_GIT_BASE"}
+ADDED_VARS = {"ACTAS_LEVEL", "ACTAS_SESSION", "ACTAS_AGENT", "ACTAS_GIT_BASE"}
 AGENT_VARS = {"GH_PROMPT_DISABLED", "GIT_TERMINAL_PROMPT", "AWS_PAGER"}
 ANTHROPIC3 = {"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"}
 USE_FLAGS = {"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
              "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS"}
 
-# What the shell running ccenv already exports. Several of these are owned
+# What the shell running actas already exports. Several of these are owned
 # by v1 (scrubbed from M2 on); CLAUDE_CONFIG_DIR and OPENAI_API_KEY are not
 # and must always survive for v1 files (SPEC 16.2).
 PARENT = {"AWS_PROFILE": "leaked-profile", "GH_TOKEN": "leaked-gh", "ANTHROPIC_API_KEY": "sk-parent",
@@ -115,7 +115,7 @@ class Ctx:
         # D-A: the modules this environment configures (only those are scrubbed)
         self.modules = {"claude"} | ({"aws"} if aws.get("profile") or aws.get("region") else set()) \
             | ({"github"} if self.account or self.gh_secret else set())
-        name = v1env["name"]
+        name = self.name = v1env["name"]
         self.gh_ref = (f"sops:{name}/{v1env['secret_env']['GH_TOKEN']}" if self.gh_secret
                        else f"gh:{self.account}" if self.account else None)
         self.agent = True                     # `run` launches claude: an agent session
@@ -171,8 +171,10 @@ ENV_RULES = [
     ("scrubbed V1_OWNED variables the parent had, of modules the environment configures (D-A)",
      lambda k, a, b, c: b == MISSING and k in V1_OWNED and c.parent.get(k) == a
      and module_of(k) in c.modules),
-    ("added: CCENV_LEVEL, CCENV_SESSION, CCENV_AGENT, CCENV_GIT_BASE",
+    ("added: ACTAS_LEVEL, ACTAS_SESSION, ACTAS_AGENT, ACTAS_GIT_BASE",
      lambda k, a, b, c: a == MISSING and k in ADDED_VARS),
+    ("renamed: v1 (ccenv) set CCENV=<name>; v2 sets ACTAS=<name> instead",
+     lambda k, a, b, c: (k, a, b) in (("CCENV", c.name, MISSING), ("ACTAS", MISSING, c.name))),
     ("added in agent sessions: GH_PROMPT_DISABLED, GIT_TERMINAL_PROMPT, AWS_PAGER",
      lambda k, a, b, c: a == MISSING and k in AGENT_VARS and c.agent),
     ("the three ANTHROPIC_* variables are unset instead of \"\" in subscription mode",
@@ -190,18 +192,20 @@ SETTINGS_RULES = [
     # and therefore fails).
     # SPEC 2.4 names the subscription blanks; SPEC 6.1 gives gateway the same
     # CLAUDE_CODE_USE_* blanks (v1 files only have subscription and gateway).
+    ("renamed: v1 settings carried env.CCENV=<name>; v2 carries env.ACTAS (SPEC 6.1 rule below)",
+     lambda k, a, b, c: (k, a, b) == ("env.CCENV", c.name, MISSING)),
     ("settings gain the blanks for CLAUDE_CODE_USE_*",
      lambda k, a, b, c: a == MISSING and b == "" and k[len("env."):] in USE_FLAGS),
     # SPEC 6.1: "settings env = every set variable from all Plans, plus
-    # CCENV/CCENV_LEVEL" - a settings value beats a shell export, so run's
+    # ACTAS/ACTAS_LEVEL" - a settings value beats a shell export, so run's
     # settings repeat the (already checked) process env. Secrets never: the
     # values must equal the process env and check_launches greps for them.
     ("settings env gains the process env's non-secret variables (SPEC 6.1)",
      lambda k, a, b, c: a == MISSING and k.startswith("env.") and c.v2_env.get(k[4:], MISSING) == b),
     # SPEC 6.1 settings example: run's settings carry the SessionStart hook
     # (absolute helper prefix, --source run, this profile's name).
-    ("settings gain the ccenv SessionStart hook (SPEC 6.1)",
-     lambda k, a, b, c: k == "hooks" and a == MISSING and is_run_hook(b, c.v2_env.get("CCENV"))),
+    ("settings gain the actas SessionStart hook (SPEC 6.1)",
+     lambda k, a, b, c: k == "hooks" and a == MISSING and is_run_hook(b, c.v2_env.get("ACTAS"))),
 ]
 
 
@@ -240,6 +244,8 @@ class CompatBase(Sandbox):
 
     def setUp(self):
         super().setUp()
+        # The frozen v1 program reads only its own (pre-rename) variable.
+        os.environ["CCENV_ROOT"] = str(self.root)
         self.v1 = load_module(V1_BIN, "ccenv_v1_under_test")
 
     def resolve_both(self, d):
@@ -343,17 +349,17 @@ class RulesAreTight(CompatBase):
         self.assertEqual(unexplained({}, {"NEW_VAR": "1"}, ENV_RULES, ctx), [("NEW_VAR", MISSING, "1")])
         self.assertEqual(unexplained({"GITHUB_TOKEN": "a"}, {"GITHUB_TOKEN": "b"}, ENV_RULES, ctx),
                          [("GITHUB_TOKEN", "a", "b")])                        # no secret_env GH_TOKEN
-        rel = {"apiKeyHelper": "ccenv secret corp token"}
+        rel = {"apiKeyHelper": "actas secret corp token"}
         self.assertNotEqual(norm_settings(rel, "v2"), norm_settings(rel, "v1"))  # relative prefix
         ctx.v2_env = {"AWS_REGION": "eu-west-1"}
         self.assertEqual(unexplained({}, {"env.AWS_REGION": "us-east-1", "env.X": "1"}, SETTINGS_RULES, ctx),
                          [("env.AWS_REGION", MISSING, "us-east-1"), ("env.X", MISSING, "1")])
-        ctx.v2_env = {"CCENV": "client-b"}
+        ctx.v2_env = {"ACTAS": "client-b"}
         hook = lambda cmd: {"SessionStart": [{"hooks": [{"type": "command", "command": cmd}]}]}  # noqa: E731
-        good = "/usr/bin/python3 /x/ccenv hook session-start --profile client-b --source run"
+        good = "/usr/bin/python3 /x/actas hook session-start --profile client-b --source run"
         self.assertEqual(unexplained({}, {"hooks": hook(good)}, SETTINGS_RULES, ctx), [])
         for bad in (good.replace("client-b", "other"), good.replace("run", "sync"),
-                    good.replace("/x/ccenv", "ccenv"), good + " extra"):
+                    good.replace("/x/actas", "actas"), good + " extra"):
             self.assertEqual(len(unexplained({}, {"hooks": hook(bad)}, SETTINGS_RULES, ctx)), 1, bad)
 
 

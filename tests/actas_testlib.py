@@ -1,23 +1,25 @@
 """Shared test support: a sandbox per test and fake backend binaries.
 
-Every Sandbox test gets its own HOME, CCENV_ROOT, CCENV_STATE, XDG_CACHE_HOME
+Every Sandbox test gets its own HOME, ACTAS_ROOT, ACTAS_STATE, XDG_CACHE_HOME
 and XDG_STATE_HOME under a temp dir, and a PATH of fake binaries plus the
 system dirs (for git and env), so no test can reach a real gh, aws or sops
-login, or the user's ~/.config/ccenv. The fakes log every call (argv and
+login, or the user's ~/.config/actas. The fakes log every call (argv and
 stdin) as JSON lines to $FAKE_LOG.
 
-The sandbox runs a copy of bin/ccenv (self.bin, also what the in-process
+The sandbox runs a copy of bin/actas (self.bin, also what the in-process
 module self.m is loaded from, so helper strings name it) whose two fixed-place
-seams, PS_BINS and USER_SESSIONS, point at the fake ps and a temp dir: no
-test reads the real process table's agent names or the developer's
-~/.local/state/ccenv/sessions, and the shipped binary has no override for them.
+seams, PS_BINS and USER_STATE (the passwd-home state dir holding the fixed
+sessions dirs), point at the fake ps and a temp dir: no test reads the real
+process table's agent names or the developer's ~/.local/state/actas/sessions
+(or ~/.local/state/ccenv/sessions, which a pre-rename install that never moved
+its state dir still uses), and the shipped binary has no override for them.
 
 Fake behaviour:
   gh       `auth token --user U [--hostname H]` prints gho_U unless U is in
            $FAKE_GH_MISSING (comma list); `auth status` lists $FAKE_GH_USERS.
            Like real gh, a GH_CONFIG_DIR without hosts.yml means "not logged
            in" (auth token and auth status fail); GH_TOKEN wins over it.
-  sops     reads $CCENV_ROOT/secrets.enc.yaml as *plain JSON*:
+  sops     reads $ACTAS_ROOT/secrets.enc.yaml as *plain JSON*:
            `-d --extract '["a"]["b"]' F`, `-d --output-type json F`,
            `set [--value-stdin] F PATH [VALUE]`, `set --help` (mentions
            --value-stdin unless $FAKE_SOPS_OLD), `--config C -e -i F`.
@@ -57,7 +59,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-BIN = REPO / "bin" / "ccenv"
+BIN = REPO / "bin" / "actas"
 V1_BIN = REPO / "tests" / "compat" / "ccenv_v1"
 SYSTEM_PATH = "/usr/bin:/bin"
 
@@ -111,7 +113,7 @@ def load(f):
     try:
         return json.loads(t)
     except ValueError:
-        return {"_meta": {"managed_by": "ccenv"}}
+        return {"_meta": {"managed_by": "actas"}}
 def keys(path):
     return [k.strip('"') for k in path.strip("[]").split("][")]
 if args[:1] == ["set"] and "--help" in args:
@@ -248,14 +250,18 @@ def make_fakebin(d, only=None):
 
 
 SEAMS = ('PS_BINS = ("/bin/ps", "/usr/bin/ps")',
-         'USER_SESSIONS = Path(passwd_home() or HOME) / ".local" / "state" / "ccenv" / "sessions"')
+         'USER_STATE = Path(passwd_home() or HOME) / ".local" / "state"')
 
 
 def sandbox_bin(dest, ps, sessions):
-    """A copy of bin/ccenv whose PS_BINS / USER_SESSIONS lines name ps and sessions."""
+    """A copy of bin/actas whose PS_BINS / USER_STATE lines name ps and the
+    state dir above sessions (<user state>/actas/sessions, or the legacy
+    <user state>/ccenv/sessions while only that one exists; both derive
+    from the same line)."""
     src = BIN.read_text(encoding="utf-8")
-    for old, new in zip(SEAMS, (f"PS_BINS = ({str(ps)!r},)", f"USER_SESSIONS = Path({str(sessions)!r})")):
-        assert src.count(old) == 1, f"seam line changed in bin/ccenv: {old}"
+    user_state = Path(sessions).parent.parent
+    for old, new in zip(SEAMS, (f"PS_BINS = ({str(ps)!r},)", f"USER_STATE = Path({str(user_state)!r})")):
+        assert src.count(old) == 1, f"seam line changed in bin/actas: {old}"
         src = src.replace(old, new)
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -264,7 +270,7 @@ def sandbox_bin(dest, ps, sessions):
     return dest
 
 
-def load_module(path=BIN, name="ccenv_under_test"):
+def load_module(path=BIN, name="actas_under_test"):
     loader = importlib.machinery.SourceFileLoader(name, str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     mod = importlib.util.module_from_spec(spec)
@@ -294,15 +300,15 @@ class Sandbox(unittest.TestCase):
         for d in (self.home, self.root):
             d.mkdir()
         self.fakebin = make_fakebin(self.tmp / "fakebin")
-        self.user_sessions = self.tmp / "passwd-home" / ".local" / "state" / "ccenv" / "sessions"
-        self.bin = sandbox_bin(self.tmp / "bin" / "ccenv", self.fakebin / "ps", self.user_sessions)
+        self.user_sessions = self.tmp / "passwd-home" / ".local" / "state" / "actas" / "sessions"
+        self.bin = sandbox_bin(self.tmp / "bin" / "actas", self.fakebin / "ps", self.user_sessions)
         self.log = self.tmp / "fake.log"
         self.out = self.tmp / "fake.out"
         self.env = {
             "HOME": str(self.home), "PATH": f"{self.fakebin}:{SYSTEM_PATH}",
-            "CCENV_ROOT": str(self.root), "CCENV_STATE": str(self.tmp / "state"),
+            "ACTAS_ROOT": str(self.root), "ACTAS_STATE": str(self.tmp / "state"),
             "XDG_CACHE_HOME": str(self.tmp / "cache"), "XDG_STATE_HOME": str(self.tmp / "xstate"),
-            "CCENV_FALLBACK_PATH": "", "FAKE_LOG": str(self.log), "FAKE_OUT": str(self.out),
+            "ACTAS_FALLBACK_PATH": "", "FAKE_LOG": str(self.log), "FAKE_OUT": str(self.out),
             "FAKE_STORE": str(self.tmp / "fake_store.json"),
             "LANG": "C.UTF-8", "NO_COLOR": "1",
         }

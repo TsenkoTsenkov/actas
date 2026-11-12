@@ -6,7 +6,7 @@ import os
 import sys
 import unittest
 
-from ccenv_testlib import Sandbox, has_yaml
+from actas_testlib import Sandbox, has_yaml
 
 MINIMAL = """\
 version: 2
@@ -21,7 +21,7 @@ profiles:
     git:    { name: Ada Example, email: ada@client-a.example }
     github: { auth: "gh:ada-client-a" }
     aws:    { profile: client-a-dev, region: eu-west-1 }
-    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:ccenv/client-a" }
+    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:actas/client-a" }
 """
 
 # SPEC 2.5 (the user's shape, placeholder names), as JSON.
@@ -93,7 +93,7 @@ class Loader(Sandbox):
         m = self.reload()
         p = m.resolve(cwd=str(self.tmp / "code/client-a/x"))
         self.assertEqual(p["name"], "client-a")
-        self.assertEqual(p["claude"]["token"], "keychain:ccenv/client-a")
+        self.assertEqual(p["claude"]["token"], "keychain:actas/client-a")
         self.assertEqual(m.resolve(cwd=str(self.tmp / "code/personal"))["aws"]["profile"], "personal")
 
     def test_unknown_key_warns_with_suggestion(self):
@@ -122,7 +122,7 @@ class Loader(Sandbox):
         bad = ["sops:a", "keychain:-x/y", "gh:-bad", "op://vault/$x", "cmd:[]", "cmd:not-json", "vault:x"]
         for ref in bad:
             self.assertIsNotNone(self.m.ref_error(ref), ref)
-        for ref in ["sops:a/b", "keychain:ccenv/client a", "op://Vault/item/field",
+        for ref in ["sops:a/b", "keychain:actas/client a", "op://Vault/item/field",
                     "gh:ada_client", "gh:ada@ghe.example.com", 'cmd:["pass", "show", "x"]']:
             self.assertIsNone(self.m.ref_error(ref), ref)
         doc = v2()
@@ -158,7 +158,7 @@ class Loader(Sandbox):
         doc["profiles"]["work"]["github"] = {"account": "ada"}
         errs = [msg for lvl, p, msg in self.load_errors(doc) if lvl == "error"]
         self.assertEqual(len(errs), 2)
-        self.assertTrue(all("ccenv migrate" in e for e in errs), errs)
+        self.assertTrue(all("actas migrate" in e for e in errs), errs)
 
     def test_errors_stop_commands_with_the_path(self):
         doc = v2()
@@ -234,7 +234,7 @@ class TranslateV1(Sandbox):
             self.assertEqual(r.returncode, 1, env)
             self.assertIn(text, r.stderr)
         self.write_manifest({"roles": {}, "environments": {}})
-        self.assertIn("ccenv migrate", self.cli("list").stderr)
+        self.assertIn("actas migrate", self.cli("list").stderr)
 
     def test_gateway_without_base_url_fails_on_use_only(self):
         self.write_manifest({"version": 1, "environments": {"gw": {"provider": "gateway"}, "ok": {}}})

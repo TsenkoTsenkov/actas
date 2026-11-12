@@ -1,17 +1,17 @@
-# The ccenv manifest
+# The actas manifest
 
-> This describes the version 2 manifest, read by ccenv 2.0 (beta `2.0.0b1`; see the README's
-> [Install](../README.md#install)). `ccenv --version` shows yours. ccenv 1.x reads only
-> [v1 manifests](#v1-manifests); it finds no profiles in a version 2 file (`ccenv list` prints
+> This describes the version 2 manifest, read by actas 2.0 (beta `2.0.0b1`; see the README's
+> [Install](../README.md#install)). `actas --version` shows yours. actas 1.x reads only
+> [v1 manifests](#v1-manifests); it finds no profiles in a version 2 file (`actas list` prints
 > `no environments defined`).
 
-One file, `~/.config/ccenv/environments.yaml` (or `$CCENV_ROOT/environments.yaml`), says which
+One file, `~/.config/actas/environments.yaml` (or `$ACTAS_ROOT/environments.yaml`), says which
 identity applies where: the model provider, cloud accounts, GitHub account, git identity and
-any other variables. ccenv matches your working directory to a **profile** and applies it to one
-process: Claude Code, Codex, Gemini or any command you run with `ccenv exec`.
+any other variables. actas matches your working directory to a **profile** and applies it to one
+process: Claude Code, Codex, Gemini or any command you run with `actas exec`.
 
 The manifest holds names and references only. Secret values stay in a secret store
-(sops, the macOS Keychain, 1Password, `gh`, or any command), and ccenv reads them when a session
+(sops, the macOS Keychain, 1Password, `gh`, or any command), and actas reads them when a session
 starts.
 
 > **The four rules**
@@ -21,7 +21,7 @@ starts.
 > 2. **`null` means off: the tool sees no account.** `aws: null` gives the AWS CLI an empty config.
 >    See [`null`, `"inherit"`, `inherit:` and `unset:`](#null-inherit-inherit-and-unset).
 > 3. **Compose upward.** A profile is at least as privileged as anything it uses. See [levels](#levels).
-> 4. **A secret is always `scheme:path`.** For example `sops:client-a/token` or `keychain:ccenv/gw`.
+> 4. **A secret is always `scheme:path`.** For example `sops:client-a/token` or `keychain:actas/gw`.
 >    See [secret references](#secret-references).
 
 Contents
@@ -32,7 +32,7 @@ Contents
   [modules](#modules), [tools](#tools), [secret references](#secret-references),
   [directory matching](#directory-matching), [merge rules](#merge-rules),
   [the process environment](#the-process-environment), [validation](#validation),
-  [files](#files-ccenv-uses)
+  [files](#files-actas-uses)
 - [v1 manifests](#v1-manifests)
 
 See also: [recipes](recipes.md) for GitLab, npm, Docker, Terraform, other agents and more;
@@ -58,7 +58,7 @@ profiles:
     git:    { name: Ada Example, email: ada@client-a.example }
     github: { auth: "gh:ada-client-a" }
     aws:    { profile: client-a-dev, region: eu-west-1 }
-    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:ccenv/client-a" }
+    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:actas/client-a" }
 ```
 
 What this does:
@@ -67,21 +67,21 @@ What this does:
   `ada-personal` (read with `gh auth token --user ada-personal`, without switching gh's active
   account), and AWS profile `personal`.
 - In `~/code/client-a`, the same for the client accounts, and Claude Code talks to the client's
-  LLM gateway. The gateway token is read from the macOS Keychain (service `ccenv`, account
+  LLM gateway. The gateway token is read from the macOS Keychain (service `actas`, account
   `client-a`) only when Claude asks for it.
 
 Try it:
 
 ```bash
-ccenv list                          # every profile, its provider, AWS profile and GitHub account
-cd ~/code/client-a && ccenv status  # which profile applies here, and why
-ccenv secret set keychain:ccenv/client-a   # store the gateway token (you are prompted)
-ccenv run                           # launch Claude Code as client-a
-ccenv exec client-a -- aws s3 ls    # run any command as client-a
+actas list                          # every profile, its provider, AWS profile and GitHub account
+cd ~/code/client-a && actas status  # which profile applies here, and why
+actas secret set keychain:actas/client-a   # store the gateway token (you are prompted)
+actas run                           # launch Claude Code as client-a
+actas exec client-a -- aws s3 ls    # run any command as client-a
 ```
 
 Everything except `version: 2` is optional, but you need at least one profile to run anything.
-A profile with no `match` can still be used by name (`ccenv run client-a`).
+A profile with no `match` can still be used by name (`actas run client-a`).
 
 ---
 
@@ -128,7 +128,7 @@ How layers combine:
 - Profiles and roles share one namespace: a name can be one or the other, not both.
 - A cycle (`a` uses `b` uses `a`) and chains deeper than 8 are errors.
 
-Run `ccenv status <profile> --why` to see the chain and which layer set each value:
+Run `actas status <profile> --why` to see the chain and which layer set each value:
 
 ```text
 chain     defaults -> gh-personal-ro -> aws-personal-ro -> no-pulumi -> personal -> aws-personal-power -> personal-power
@@ -156,7 +156,7 @@ also **sticky**: a later layer cannot remove them, not even with `permissions: n
 error naming the layer that added the rule:
 
 ```text
-ccenv: a: cannot replace permissions: it would drop permissions.deny (added by guard)
+actas: a: cannot replace permissions: it would drop permissions.deny (added by guard)
 ```
 
 The rules use Claude Code's permission syntax and are written into Claude's settings (see
@@ -172,8 +172,8 @@ much the profile's credentials can do, and picks a built-in set of agent rules.
 | Edit local files | allowed | allowed | allowed |
 | `git push`, `gh pr merge`, `gh release`, `glab mr merge` | denied | ask | allowed |
 | Deploys (`terraform apply`, `kubectl apply`, `helm upgrade`, `pulumi up`, `cdk deploy`, `aws * delete-*`, …) | denied | ask | ask |
-| Reading secrets (`ccenv secret`, `sops`, `gh auth token`, credential files, …) | denied | denied | denied |
-| Switching profile (`ccenv exec`, `ccenv run`, `ccenv login`, `ccenv sync`) | ask | ask | ask |
+| Reading secrets (`actas secret`, `sops`, `gh auth token`, credential files, …) | denied | denied | denied |
+| Switching profile (`actas exec`, `actas run`, `actas login`, `actas sync`) | ask | ask | ask |
 | Gemini CLI `--approval-mode` | `default` | `default` | `auto_edit` |
 
 "Readonly" means read-only toward remote systems and credentials. Local edits stay allowed in
@@ -181,14 +181,14 @@ every level. For Claude's plan mode, add `claude: { settings: { permissions: { d
 
 The level is a label for credentials you chose, not a sandbox. A readonly profile is only
 read-only if its credentials are: a read-only AWS role, a fine-grained read-only GitHub token.
-`ccenv doctor` says so when a readonly profile uses a `gh:` login, which usually has full repo
+`actas doctor` says so when a readonly profile uses a `gh:` login, which usually has full repo
 scope.
 
 **Compose upward.** A profile's level is the highest level in its chain (or `standard` if none is
 set). A profile cannot declare a level lower than a layer it uses:
 
 ```text
-ccenv: a: declares level readonly but uses a higher-level layer (compose upward: a profile is at least as privileged as what it uses)
+actas: a: declares level readonly but uses a higher-level layer (compose upward: a profile is at least as privileged as what it uses)
 ```
 
 So build a power profile on top of a readonly one, never the reverse:
@@ -209,22 +209,22 @@ profiles:
 
 ### `confirm`
 
-`confirm: true` means a human must type the profile name before `ccenv run` or `ccenv exec` uses
+`confirm: true` means a human must type the profile name before `actas run` or `actas exec` uses
 it, and agents are always refused. `confirm` is OR'd through the chain: if any layer sets it, the
-profile has it. `ccenv sync` skips `confirm` profiles unless you pass `--include-confirm`.
+profile has it. `actas sync` skips `confirm` profiles unless you pass `--include-confirm`.
 
-`ccenv doctor` warns about a `power` profile without `confirm`.
+`actas doctor` warns about a `power` profile without `confirm`.
 
 ### `agents_may_use`
 
-An agent session started with `ccenv run` may run commands in other profiles with
-`ccenv exec <profile> -- <cmd>` only if:
+An agent session started with `actas run` may run commands in other profiles with
+`actas exec <profile> -- <cmd>` only if:
 
 - the target is the session's own profile, or is listed in the session profile's `agents_may_use`;
 - the target's level is the same or lower than the session's;
 - the target has no `confirm`.
 
-Otherwise ccenv refuses with a `ccenv-stop:` line and a text for the agent to show you. You then
+Otherwise actas refuses with an `actas-stop:` line and a text for the agent to show you. You then
 run the command yourself in a separate terminal.
 
 ```yaml
@@ -235,12 +235,12 @@ profiles:
 ```
 
 `agents_may_use` belongs to profiles only and is not inherited, and hops do not chain: a nested
-`ccenv run` an agent starts keeps the outer session's list. The full gate is in
+`actas run` an agent starts keeps the outer session's list. The full gate is in
 [agents.md](agents.md).
 
 ### `null`, `"inherit"`, `inherit:` and `unset:`
 
-ccenv clears identity variables your shell already has (for example a stale `AWS_PROFILE`), so a
+actas clears identity variables your shell already has (for example a stale `AWS_PROFILE`), so a
 session never runs as the wrong account by accident. These keys control that:
 
 | You write | Effect |
@@ -254,7 +254,7 @@ session never runs as the wrong account by accident. These keys control that:
 | `env: { X: null }` or `secret_env: { X: null }` | Remove `X` from the session (like `unset`, for one variable). |
 
 The empty home behind `null` (`homes/<module>/_off`) is shared by every profile that turns the
-module off, so never log in inside it: ccenv moves a login it finds there aside (with a warning)
+module off, so never log in inside it: actas moves a login it finds there aside (with a warning)
 and `doctor` reports it.
 
 `unset` is unioned and sticky across layers, like the deny lists. `inherit` is unioned.
@@ -272,15 +272,15 @@ profiles:
   scratch: { level: readonly }
 ```
 
-Without `fallback`, running ccenv outside every `match` is an error that lists your profiles.
+Without `fallback`, running actas outside every `match` is an error that lists your profiles.
 
 ### Checking your work
 
-- `ccenv status [profile] --why` shows the chain, the source of each value, the variables set,
+- `actas status [profile] --why` shows the chain, the source of each value, the variables set,
   cleared and read from secrets, and the agent rules.
-- `ccenv doctor` validates the manifest and lists problems by path. `ccenv doctor --strict` turns
+- `actas doctor` validates the manifest and lists problems by path. `actas doctor --strict` turns
   warnings into errors.
-- `ccenv list --json` lists profiles and roles for scripts.
+- `actas list --json` lists profiles and roles for scripts.
 
 ---
 
@@ -313,11 +313,11 @@ Names of profiles and roles: letters, digits, `.`, `_`, `-`, starting with a let
 | `agents_may_use` | list of profile names | `[]` | local | Profiles an agent in this profile's session may `exec` ([above](#agents_may_use)). Profiles only. |
 | `level` | `readonly` / `standard` / `power` | `standard` | highest wins | Declared privilege ([levels](#levels)). |
 | `confirm` | bool | `false` | any `true` wins | A human must type the profile name; agents are refused. |
-| `tool` | `claude` / `codex` / `gemini` | `claude` | later wins | What `ccenv run` launches. `ccenv run -t TOOL` overrides it. |
+| `tool` | `claude` / `codex` / `gemini` | `claude` | later wins | What `actas run` launches. `actas run -t TOOL` overrides it. |
 | `permissions` | map | `{}` | per field | `deny`, `ask` (lists, unioned, sticky), `builtin` (bool). See [permissions](#permissions). |
 | `inherit` | list of variable names | `[]` | unioned | Shell variables passed through even though a module owns them. |
 | `unset` | list of variable names | `[]` | unioned, sticky | Always removed from the session. Wins over everything. |
-| `env` | map VAR → string | `{}` | merged | Plain values. `null` removes the variable. Never secrets: `ccenv sync` writes these into settings files. |
+| `env` | map VAR → string | `{}` | merged | Plain values. `null` removes the variable. Never secrets: `actas sync` writes these into settings files. |
 | `secret_env` | map VAR → ref | `{}` | merged | Values read from a [secret reference](#secret-references) at launch, into the process environment only. Never written to a file. `null` removes the variable. |
 | `aws`, `gcp`, `azure`, `github`, `git` | map, `inherit` or `null` | — | merged | [Modules](#modules). |
 | `claude`, `codex`, `gemini` | map | — | merged | [Tools](#tools). |
@@ -336,9 +336,9 @@ removes the key.
 
 Effective rules = the level's built-in rules (unless `builtin: false`) + every `deny`/`ask` in the
 chain + `claude.settings.permissions` lists. They reach Claude Code through the settings file
-`ccenv run` passes (`--settings`) and the `.claude/settings.local.json` that `ccenv sync` writes.
+`actas run` passes (`--settings`) and the `.claude/settings.local.json` that `actas sync` writes.
 Codex and Gemini do not get these rules in this release; Gemini gets `--approval-mode` from the
-level. The built-in secret rules also deny editing ccenv's own config and state directories, and
+level. The built-in secret rules also deny editing actas's own config and state directories, and
 reading the age key and the credential files of every module the manifest uses (for example
 `~/.aws/sso/cache`, `~/.config/gh/hosts.yml`, a Claude home's `.credentials.json`).
 
@@ -348,8 +348,8 @@ scoped credentials are the boundary. See [agents.md](agents.md).
 ### Modules
 
 Each module is a map, the string `inherit` (off, shell values pass through) or `null` (off and
-isolated). A **home** is either a name, which means a directory ccenv manages under
-`~/.local/state/ccenv/homes/<module>/<name>` (created mode 0700 on first use), or an absolute or
+isolated). A **home** is either a name, which means a directory actas manages under
+`~/.local/state/actas/homes/<module>/<name>` (created mode 0700 on first use), or an absolute or
 `~/` path.
 
 #### aws
@@ -359,14 +359,14 @@ isolated). A **home** is either a name, which means a directory ccenv manages un
 | `profile` | string | `AWS_PROFILE`. Also the Claude setting `awsAuthRefresh` (`aws sso login --profile …`) when the AWS CLI is installed. |
 | `region` | string | `AWS_REGION` and `AWS_DEFAULT_REGION`. |
 | `config_file` | path | `AWS_CONFIG_FILE`. |
-| `sso_session` | string | SSO logins (`ccenv login`, `run --login`, `aws-handoff --login`) run `aws sso login --sso-session <name>` instead of `--profile`. |
+| `sso_session` | string | SSO logins (`actas login`, `run --login`, `aws-handoff --login`) run `aws sso login --sso-session <name>` instead of `--profile`. |
 
 - Clears from your shell: `AWS_PROFILE AWS_DEFAULT_PROFILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_REGION AWS_DEFAULT_REGION`,
   plus `AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE` when some layer uses `config_file` or `aws: null`.
 - `aws: null`: `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` point at two empty files under
   `homes/aws/_off/`.
 - In agent sessions: `AWS_PAGER=` (empty).
-- `ccenv login [profile]` runs `aws sso login` for it; `ccenv status --probe` runs
+- `actas login [profile]` runs `aws sso login` for it; `actas status --probe` runs
   `aws sts get-caller-identity`.
 
 #### gcp
@@ -383,7 +383,7 @@ isolated). A **home** is either a name, which means a directory ccenv manages un
 - Also clears `GOOGLE_CREDENTIALS`, `GOOGLE_OAUTH_ACCESS_TOKEN`.
 - `gcp: null`: `CLOUDSDK_CONFIG` points at an empty directory.
 - In agent sessions, when the profile has a gcp block: `CLOUDSDK_CORE_DISABLE_PROMPTS=1`.
-- `ccenv login [profile] --module gcp [--adc]` runs `gcloud auth login` (and
+- `actas login [profile] --module gcp [--adc]` runs `gcloud auth login` (and
   `gcloud auth application-default login`) with the profile's environment, so a `home` gets its
   own login.
 
@@ -401,7 +401,7 @@ isolated). A **home** is either a name, which means a directory ccenv manages un
   `ARM_SUBSCRIPTION_ID` (Terraform) are pinned. `status --why` notes this.
 - `azure: null`: `AZURE_CONFIG_DIR` points at an empty directory.
 - In agent sessions, when the profile has an azure block: `AZURE_CORE_LOGIN_EXPERIENCE_V2=no`.
-- `ccenv login [profile] --module azure` runs `az login [--tenant …]`, then
+- `actas login [profile] --module azure` runs `az login [--tenant …]`, then
   `az account set --subscription …` only inside a `home` (never against `~/.azure`).
 
 #### github
@@ -427,7 +427,7 @@ With `auth`:
 - The cost: your gh aliases and config are not loaded in that session; use `home:` if you need
   them.
 - The exception is your own direnv/shell output (`shell --no-secrets` outside an agent session,
-  which `use ccenv` runs). It leaves the token out by design, so it leaves `GH_CONFIG_DIR` alone
+  which `use actas` runs). It leaves the token out by design, so it leaves `GH_CONFIG_DIR` alone
   too and `gh` there uses its keyring login (`git push` uses the helper either way).
 
 With `home`: `GH_CONFIG_DIR` (and `GH_HOST` for a non-github.com host), and git uses
@@ -437,7 +437,7 @@ With `home`: `GH_CONFIG_DIR` (and `GH_HOST` for a non-github.com host), and git 
 - `github: null`: empty `GH_CONFIG_DIR`, and git's credential helpers for `https://github.com` are
   reset with nothing after them (public clones still work; nothing authenticates).
 - In agent sessions: `GH_PROMPT_DISABLED=1`, `GIT_TERMINAL_PROMPT=0`.
-- `ccenv login [profile] --module github`: for `gh:` runs `gh auth login --web`, then switches
+- `actas login [profile] --module github`: for `gh:` runs `gh auth login --web`, then switches
   gh's active account back to the one that was active before (gh makes a new login active); for a
   token ref, prints how to create a fine-grained PAT and store it.
 
@@ -458,9 +458,9 @@ them (`git credential fill`). It is a convenience, not a boundary.
 | `config` | map key → string | Any other git config, applied last. `null` skips a key. |
 
 All of it goes through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, appended after
-any your shell already has. `CCENV_GIT_BASE` marks where ccenv's pairs start (0 in synced files,
-`shell --format env` and `desktop --vscode`), so a nested `ccenv exec`/`run` replaces them,
-including another profile's credential helper. ccenv never edits `~/.gitconfig`. `git: null` just sets no identity.
+any your shell already has. `ACTAS_GIT_BASE` marks where actas's pairs start (0 in synced files,
+`shell --format env` and `desktop --vscode`), so a nested `actas exec`/`run` replaces them,
+including another profile's credential helper. actas never edits `~/.gitconfig`. `git: null` just sets no identity.
 
 - In agent sessions, when the profile has a git block: `GIT_TERMINAL_PROMPT=0`.
 
@@ -473,7 +473,7 @@ secret_env: { NPM_TOKEN: "sops:client-a/npm", SENTRY_AUTH_TOKEN: "op://Work/Sent
 
 - `env` values are literal text: `~` and `$VARS` are **not** expanded, so write absolute paths.
   Numbers are converted to text; booleans are an error (quote `"true"`, `"yes"`, `"on"`).
-  `ccenv sync` writes `env` into `.claude/settings.local.json`, so `doctor` warns when a name looks
+  `actas sync` writes `env` into `.claude/settings.local.json`, so `doctor` warns when a name looks
   secret (`KEY`, `TOKEN`, `SECRET`, `AUTH`, `PASSWORD`, `HEADERS`).
 - `secret_env` values must be [refs](#secret-references) (or `null`, which removes the variable). They are read at launch into the process
   environment only. A secret that cannot be read is a warning, and the variable is left unset
@@ -489,9 +489,9 @@ secret_env: { NPM_TOKEN: "sops:client-a/npm", SENTRY_AUTH_TOKEN: "op://Work/Sent
 | `provider` | `subscription` / `gateway` / `api-key` / `bedrock` / `vertex` | `subscription` | Where Claude Code sends requests. |
 | `home` | home | none | `CLAUDE_CONFIG_DIR`: a separate claude.ai login, settings and history (a second subscription). Process environment only. |
 | `base_url` | URL | — | gateway: required. bedrock: optional `ANTHROPIC_BEDROCK_BASE_URL`. |
-| `token` | ref | — | gateway, api-key: required. Reaches Claude through `apiKeyHelper` (`ccenv secret --ref …`), not the environment. |
+| `token` | ref | — | gateway, api-key: required. Reaches Claude through `apiKeyHelper` (`actas secret --ref …`), not the environment. |
 | `export_token` | bool | `false` | Also put the token in the process environment (`ANTHROPIC_AUTH_TOKEN`, or `ANTHROPIC_API_KEY` for api-key or `auth_header: x-api-key`). |
-| `auth_header` | `bearer` / `x-api-key` | `bearer` | Which header the gateway expects (also used by `ccenv desktop --print-3p`). |
+| `auth_header` | `bearer` / `x-api-key` | `bearer` | Which header the gateway expects (also used by `actas desktop --print-3p`). |
 | `models` | map `opus`, `sonnet`, `haiku`, `default`, `subagent` | — | `ANTHROPIC_DEFAULT_OPUS_MODEL`, `…_SONNET_…`, `…_HAIKU_…`, `ANTHROPIC_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`. |
 | `oauth_token` | ref | — | subscription: `CLAUDE_CODE_OAUTH_TOKEN`, process environment only. |
 | `project` | string | `gcp.project` | vertex: `ANTHROPIC_VERTEX_PROJECT_ID`. |
@@ -507,7 +507,7 @@ Per provider:
 | `subscription` | nothing | Any provider variables from your shell cleared; uses the claude.ai login of the Claude home. |
 | `gateway` | `base_url`, `token` | `ANTHROPIC_BASE_URL`, `apiKeyHelper`. |
 | `api-key` | `token` | `apiKeyHelper` with the key (Anthropic API). |
-| `bedrock` | `aws.region`, and `aws.profile` or `bearer_token` | `CLAUDE_CODE_USE_BEDROCK=1` plus the AWS module's variables and `awsAuthRefresh`. Pin `models` to IDs your account has enabled (ccenv warns when none are set). |
+| `bedrock` | `aws.region`, and `aws.profile` or `bearer_token` | `CLAUDE_CODE_USE_BEDROCK=1` plus the AWS module's variables and `awsAuthRefresh`. Pin `models` to IDs your account has enabled (actas warns when none are set). |
 | `vertex` | `region`, and `project` or `gcp.project` | `CLAUDE_CODE_USE_VERTEX=1`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`. |
 
 Foundry and other extras (custom headers, model discovery) are [recipes](recipes.md#claude-code-extras).
@@ -516,18 +516,18 @@ Secrets that reach the process environment (`oauth_token`, `bearer_token`, `expo
 `env: { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" }`.
 
 A new `home` starts empty (no user settings, plugins, MCP servers or `CLAUDE.md`). While the home
-is still empty, ccenv prints `<home> has no login yet: run /login in the first claude session started there`.
+is still empty, actas prints `<home> has no login yet: run /login in the first claude session started there`.
 
 #### codex
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `home` | home | none | `CODEX_HOME`: a separate Codex login and config. |
-| `login` | `chatgpt` / `api` | `chatgpt` | How `ccenv login` signs Codex in. |
-| `api_key` | ref | — | With `login: api`: `ccenv login` pipes the key to `codex login --with-api-key` on stdin. Never exported by ccenv, but Codex itself stores it in plain text in the home's `auth.json`, so `login: api` needs `home` (`ccenv login` refuses without one rather than overwrite the global `~/.codex`). |
+| `login` | `chatgpt` / `api` | `chatgpt` | How `actas login` signs Codex in. |
+| `api_key` | ref | — | With `login: api`: `actas login` pipes the key to `codex login --with-api-key` on stdin. Never exported by actas, but Codex itself stores it in plain text in the home's `auth.json`, so `login: api` needs `home` (`actas login` refuses without one rather than overwrite the global `~/.codex`). |
 | `args` | list | `[]` | Arguments always passed to `codex`. |
 
-Codex support is environment level: ccenv sets `CODEX_HOME` and launches `codex`. It does not
+Codex support is environment level: actas sets `CODEX_HOME` and launches `codex`. It does not
 write Codex's `config.toml` (a gateway is a [recipe](recipes.md#codex-through-a-gateway)), and
 the level's agent rules are not rendered for Codex. Clears: `CODEX_HOME CODEX_API_KEY OPENAI_API_KEY OPENAI_BASE_URL CODEX_ACCESS_TOKEN`.
 
@@ -542,18 +542,18 @@ the level's agent rules are not rendered for Codex. Clears: `CODEX_HOME CODEX_AP
 | `location` | string | — | vertex location. |
 | `args` | list | `[]` | Arguments always passed to `gemini`. |
 
-`ccenv run` launches `gemini --approval-mode <mode>` with the mode from the [level](#levels).
+`actas run` launches `gemini --approval-mode <mode>` with the mode from the [level](#levels).
 Clears: `GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_GENAI_USE_VERTEXAI GOOGLE_GEMINI_BASE_URL GOOGLE_CLOUD_LOCATION GEMINI_CLI_HOME`.
 
-Any other CLI or agent runs with `ccenv exec <profile> -- <command>` ([recipes](recipes.md#other-agents)).
+Any other CLI or agent runs with `actas exec <profile> -- <command>` ([recipes](recipes.md#other-agents)).
 
 ### Secret references
 
 A ref names its scheme. A bare value where a ref is expected is an error that suggests one.
 
-| Scheme | Form | Read with | Write with `ccenv secret set REF` |
+| Scheme | Form | Read with | Write with `actas secret set REF` |
 |---|---|---|---|
-| sops | `sops:<group>/<key>` | `sops -d` of `~/.config/ccenv/secrets.enc.yaml`, key `["group"]["key"]`; one decrypt per launch | yes (value prompted, or piped on stdin; handed to sops on stdin when it supports `--value-stdin`). The first write creates `secrets.enc.yaml`, which needs `.sops.yaml` (see `ccenv init`) |
+| sops | `sops:<group>/<key>` | `sops -d` of `~/.config/actas/secrets.enc.yaml`, key `["group"]["key"]`; one decrypt per launch | yes (value prompted, or piped on stdin; handed to sops on stdin when it supports `--value-stdin`). The first write creates `secrets.enc.yaml`, which needs `.sops.yaml` (see `actas init`) |
 | keychain (macOS) | `keychain:<service>/<account>` | `security find-generic-password -s SERVICE -a ACCOUNT -w` | yes (`security` prompts for the value) |
 | 1Password | `op://<vault>/<item>/<field>` | `op read REF` | no |
 | gh | `gh:<login>` or `gh:<login>@<host>` | `gh auth token --user LOGIN --hostname HOST` | no (`gh auth login`) |
@@ -575,14 +575,14 @@ Details:
 - Reads have a 30 s timeout and never use a shell.
 - `keychain:` works on macOS only; elsewhere use a `cmd:` ref with `secret-tool`
   ([recipe](recipes.md#secret-stores-through-cmd)).
-- `cmd:` commands run with the environment ccenv itself started with, not the profile's, so put
-  everything the command needs (addresses, project names) in its argv. `ccenv doctor` lists every
+- `cmd:` commands run with the environment actas itself started with, not the profile's, so put
+  everything the command needs (addresses, project names) in its argv. `actas doctor` lists every
   `cmd:` ref.
-- For 1Password with several accounts, export `OP_ACCOUNT` in the shell you start ccenv from, or
+- For 1Password with several accounts, export `OP_ACCOUNT` in the shell you start actas from, or
   use a `cmd:` ref that names the account:
   `{cmd: ["op", "read", "--account", "work", "op://Work/Sentry/token"]}`. A profile's `env:` does
   not reach refs read at launch (it does reach helpers that run later in the session).
-- `ccenv secret --ref REF` prints a value (this is what helpers call). `ccenv secret ENV KEY`
+- `actas secret --ref REF` prints a value (this is what helpers call). `actas secret ENV KEY`
   is the v1 form for `sops:ENV/KEY` and still works.
 
 ### Directory matching
@@ -591,9 +591,9 @@ Details:
   below it, or matches it as a glob (`*` also crosses `/`). `~/code/x/*` does not match
   `~/code/x` itself.
 - **The longest matching pattern wins**; on a tie, the profile and pattern listed first.
-- Only when nothing matches: ccenv retries with your shell's logical `$PWD` (symlinked
+- Only when nothing matches: actas retries with your shell's logical `$PWD` (symlinked
   directories), then case-insensitively on macOS, then uses `fallback:`.
-- `ccenv --cwd DIR …` resolves as if you were in `DIR`; `ccenv status` shows `matched_by`.
+- `actas --cwd DIR …` resolves as if you were in `DIR`; `actas status` shows `matched_by`.
 
 ### Merge rules
 
@@ -615,22 +615,22 @@ In order: `defaults`, the linearized `use:` chain, the profile.
 
 What a session gets, in order of precedence (later wins): `aws`, `gcp`, `azure`, `github`, `git`,
 `claude`, `codex`, `gemini`, `env`, `secret_env`; then `unset` and `null` remove variables; then
-ccenv adds `CCENV` (profile name), `CCENV_LEVEL`, and, for agent tools (`run`, or `exec` of a
-command named like a known agent CLI such as `aider`), `CCENV_AGENT`. `ccenv run`
-also sets `CCENV_SESSION`. `doctor` warns when two modules set the same variable to different
+actas adds `ACTAS` (profile name), `ACTAS_LEVEL`, and, for agent tools (`run`, or `exec` of a
+command named like a known agent CLI such as `aider`), `ACTAS_AGENT`. `actas run`
+also sets `ACTAS_SESSION`. `doctor` warns when two modules set the same variable to different
 values.
 
 **What is cleared from your shell:** the variables owned by every module and tool your manifest
 mentions anywhere (in any profile, role or `defaults`), unless the profile sets them, passes them
 through with `inherit`, or turns the module to `inherit`. `claude` counts as mentioned whenever a
 profile runs Claude (the default). Variables of modules you never mention are left alone (a
-manifest without `codex` does not touch `OPENAI_API_KEY`). `ccenv run` prints
-`cleared from your shell: …` when it removed something non-empty, and `ccenv doctor` lists what a
+manifest without `codex` does not touch `OPENAI_API_KEY`). `actas run` prints
+`cleared from your shell: …` when it removed something non-empty, and `actas doctor` lists what a
 run in the current directory would clear.
 
 Every variable the manifest names in some layer's `secret_env` is cleared the same way:
 a profile that does not set `NPM_TOKEN` drops the `NPM_TOKEN` another profile's session or
-`ccenv shell` left in your shell. Keep one with `inherit: [NPM_TOKEN]`. Plain `env:` names are
+`actas shell` left in your shell. Keep one with `inherit: [NPM_TOKEN]`. Plain `env:` names are
 not cleared for other profiles (they are not secrets, and a `SSH_AUTH_SOCK` or `KUBECONFIG` one
 profile sets must not vanish from every other session); a profile that must not see one lists it
 in `unset:`. Session basics (`PATH`, `HOME`, `SSH_AUTH_SOCK`, `DISPLAY`, `EDITOR`, `VISUAL`,
@@ -656,29 +656,29 @@ never names (`GITLAB_TOKEN` exported in your shell profile, …) are left alone;
   manifest uses Gemini, `.env` files Gemini CLI would load.
 - The manifest may be YAML (needs PyYAML or `yq`) or JSON (no dependency).
 
-### Files ccenv uses
+### Files actas uses
 
 | What | Where |
 |---|---|
-| Manifest | `~/.config/ccenv/environments.yaml` (`$CCENV_ROOT` overrides the directory) |
-| sops secrets and config | `~/.config/ccenv/secrets.enc.yaml`, `~/.config/ccenv/.sops.yaml` |
-| Managed homes | `~/.local/state/ccenv/homes/<module>/<name>` (`$CCENV_STATE`, or `$XDG_STATE_HOME/ccenv`) |
-| Session records, sync ledger, audit log | `~/.local/state/ccenv/sessions/`, `sync-ledger.json`, `audit.jsonl`; a copy of each session record also goes under your passwd home's `~/.local/state/ccenv/sessions/`, which no variable moves |
-| Generated Claude settings | `~/.cache/ccenv/<profile>.<hash>.settings.json` (`$XDG_CACHE_HOME`), pruned after 7 days |
+| Manifest | `~/.config/actas/environments.yaml` (`$ACTAS_ROOT` overrides the directory) |
+| sops secrets and config | `~/.config/actas/secrets.enc.yaml`, `~/.config/actas/.sops.yaml` |
+| Managed homes | `~/.local/state/actas/homes/<module>/<name>` (`$ACTAS_STATE`, or `$XDG_STATE_HOME/actas`) |
+| Session records, sync ledger, audit log | `~/.local/state/actas/sessions/`, `sync-ledger.json`, `audit.jsonl`; a copy of each session record also goes under your passwd home's `~/.local/state/actas/sessions/`, which no variable moves |
+| Generated Claude settings | `~/.cache/actas/<profile>.<hash>.settings.json` (`$XDG_CACHE_HOME`), pruned after 7 days |
 
-Everything ccenv writes is mode 0600 in 0700 directories. Secret values are never written to any
+Everything actas writes is mode 0600 in 0700 directories. Secret values are never written to any
 of these files.
 
-Set `CCENV_ROOT` / `CCENV_STATE` per command, or start agents with `ccenv run`. Exported globally
-to a non-default place, they make agents without a `ccenv run` session (bare `claude`, IDE,
-Desktop) refuse every `ccenv exec` with `reason=override` (see
+Set `ACTAS_ROOT` / `ACTAS_STATE` per command, or start agents with `actas run`. Exported globally
+to a non-default place, they make agents without an `actas run` session (bare `claude`, IDE,
+Desktop) refuse every `actas exec` with `reason=override` (see
 [docs/agents.md, The gate](agents.md#the-gate)). A value equal to the default place is fine.
 
 ---
 
 ## v1 manifests
 
-A file without `version: 2` is a v1 manifest. It keeps working unchanged: ccenv translates it on
+A file without `version: 2` is a v1 manifest. It keeps working unchanged: actas translates it on
 load and runs it on the same engine.
 
 | v1 | v2 equivalent |
@@ -694,7 +694,7 @@ load and runs it on the same engine.
 | `secret_env.GH_TOKEN` | `github.auth: "sops:<env>/<key>"` (git gets a helper for it) |
 | `defaults:` (shallow: a block in the environment replaces the whole default block) | `defaults:` (deep merge) |
 
-For a v1 file, ccenv keeps v1 behaviour where v2 would differ:
+For a v1 file, actas keeps v1 behaviour where v2 would differ:
 
 - no built-in agent rules are written into Claude's settings;
 - the gateway token is still exported (`ANTHROPIC_AUTH_TOKEN`);
@@ -703,20 +703,20 @@ For a v1 file, ccenv keeps v1 behaviour where v2 would differ:
   provider variables; AWS variables only for an environment with an `aws:` block; `GH_TOKEN` and
   `GITHUB_TOKEN` only with a GitHub account or `secret_env.GH_TOKEN`), not `CLAUDE_CONFIG_DIR`,
   `OPENAI_API_KEY`, `GOOGLE_*` or `ARM_*`. An environment without `aws:` keeps your shell's
-  `AWS_PROFILE`, as v1 did. `ccenv migrate` writes `aws: "inherit"` for such an environment
+  `AWS_PROFILE`, as v1 did. `actas migrate` writes `aws: "inherit"` for such an environment
   (v1's behaviour) and suggests `aws: null`, which isolates it.
 
 A v1 file that uses v2 keys (`roles`, `use`, `level`, a `claude:` block, …) is an error that says
 to add `version: 2`. A v2 file with v1 keys (`provider`, `gateway`, `github.account`, …) is an
-error that points to `ccenv migrate`.
+error that points to `actas migrate`.
 
-**Converting:** `ccenv migrate` prints your manifest as v2. Every secret keeps its v1 sops path
-(`sops:<environment>/<key>`), so `secrets.enc.yaml` needs no change, and ccenv never reads or
+**Converting:** `actas migrate` prints your manifest as v2. Every secret keeps its v1 sops path
+(`sops:<environment>/<key>`), so `secrets.enc.yaml` needs no change, and actas never reads or
 edits it while migrating. The output keeps `claude.export_token: true` where v1 exported the
 token; stderr lists what changes once you switch (built-in agent rules, wider clearing, GitHub
 failing closed, boolean `env` values becoming errors) and suggests roles for repeated blocks.
-`ccenv migrate --write` replaces the manifest and keeps the old file as
-`~/.config/ccenv/environments.v1.yaml`. Comments are not carried over.
+`actas migrate --write` replaces the manifest and keeps the old file as
+`~/.config/actas/environments.v1.yaml`. Comments are not carried over.
 
 [`examples/environments.v1.yaml`](../examples/environments.v1.yaml) is the v1 example;
 [`examples/environments.yaml`](../examples/environments.yaml) is the v2 one.

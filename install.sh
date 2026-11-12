@@ -1,11 +1,11 @@
 #!/bin/sh
-# install.sh - install ccenv (one Python file) into ~/.local/bin.
+# install.sh - install actas (one Python file) into ~/.local/bin.
 #
-#   curl -fsSLO https://raw.githubusercontent.com/TsenkoTsenkov/ccenv/main/install.sh
+#   curl -fsSLO https://raw.githubusercontent.com/TsenkoTsenkov/actas/main/install.sh
 #   sh install.sh                     # latest release
 #   sh install.sh --version v2.0.0    # a given release
 #
-# It downloads the release asset `ccenv` and `SHA256SUMS`, checks the
+# It downloads the release asset `actas` and `SHA256SUMS`, checks the
 # SHA-256, and installs the file with mode 0755. It never uses sudo.
 # If the destination is a symlink (for example into a git checkout), it
 # refuses unless --force, and then replaces the link itself; it never writes
@@ -16,32 +16,34 @@
 # `gh attestation verify` command printed at the end.
 #
 # Options and environment:
-#   --version TAG   release tag, or "latest" (CCENV_VERSION; default latest)
-#   --dir DIR       install directory (CCENV_INSTALL_DIR; default ~/.local/bin)
-#   --repo O/N      GitHub repository (CCENV_REPO; default TsenkoTsenkov/ccenv)
-#   --force         replace a symlink at DIR/ccenv
+#   --version TAG   release tag, or "latest" (ACTAS_VERSION; default latest)
+#   --dir DIR       install directory (ACTAS_INSTALL_DIR; default ~/.local/bin)
+#   --repo O/N      GitHub repository (ACTAS_REPO; default TsenkoTsenkov/actas)
+#   --force         replace a symlink at DIR/actas
+# The pre-rename CCENV_VERSION, CCENV_INSTALL_DIR and CCENV_REPO are read
+# when the ACTAS_ ones are unset (legacy).
 
 set -eu
 
-REPO=${CCENV_REPO:-TsenkoTsenkov/ccenv}
-VERSION=${CCENV_VERSION:-latest}
-DIR=${CCENV_INSTALL_DIR:-}
+REPO=${ACTAS_REPO:-${CCENV_REPO:-TsenkoTsenkov/actas}}
+VERSION=${ACTAS_VERSION:-${CCENV_VERSION:-latest}}
+DIR=${ACTAS_INSTALL_DIR:-${CCENV_INSTALL_DIR:-}}
 FORCE=0
 TMP=
 STAGE=
 
-say() { printf 'ccenv-install: %s\n' "$*"; }
-die() { printf 'ccenv-install: error: %s\n' "$*" >&2; exit 1; }
+say() { printf 'actas-install: %s\n' "$*"; }
+die() { printf 'actas-install: error: %s\n' "$*" >&2; exit 1; }
 
 usage() {
 	cat <<'EOF'
 usage: sh install.sh [--version TAG] [--dir DIR] [--repo OWNER/NAME] [--force]
 
-Installs the ccenv release asset (SHA-256 checked) as DIR/ccenv, mode 0755.
-  --version TAG   release tag such as v2.0.0, or latest (default; CCENV_VERSION)
-  --dir DIR       install directory (default ~/.local/bin; CCENV_INSTALL_DIR)
-  --repo O/N      GitHub repository (default TsenkoTsenkov/ccenv; CCENV_REPO)
-  --force         replace a symlink at DIR/ccenv (the link itself, never its target)
+Installs the actas release asset (SHA-256 checked) as DIR/actas, mode 0755.
+  --version TAG   release tag such as v2.0.0, or latest (default; ACTAS_VERSION)
+  --dir DIR       install directory (default ~/.local/bin; ACTAS_INSTALL_DIR)
+  --repo O/N      GitHub repository (default TsenkoTsenkov/actas; ACTAS_REPO)
+  --force         replace a symlink at DIR/actas (the link itself, never its target)
 Never uses sudo.
 EOF
 }
@@ -97,7 +99,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/ccenv-install.XXXXXX") || die "cannot create a temp directory"
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/actas-install.XXXXXX") || die "cannot create a temp directory"
 
 fetch() {
 	curl -fsSL --proto '=https' --proto-redir '=https' --retry 2 -o "$2" "$1" && return
@@ -105,23 +107,23 @@ fetch() {
 	die "download failed: $1"
 }
 
-say "downloading ccenv $VERSION from github.com/$REPO"
-fetch "$BASE/ccenv" "$TMP/ccenv"
+say "downloading actas $VERSION from github.com/$REPO"
+fetch "$BASE/actas" "$TMP/actas"
 fetch "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
 
-want=$(awk '$2 == "ccenv" || $2 == "*ccenv" { print $1; exit }' "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
+want=$(awk '$2 == "actas" || $2 == "*actas" { print $1; exit }' "$TMP/SHA256SUMS" | tr 'A-F' 'a-f')
 case $want in
-	*[!0-9a-f]* | "") die "SHA256SUMS has no valid entry for ccenv; nothing was installed" ;;
+	*[!0-9a-f]* | "") die "SHA256SUMS has no valid entry for actas; nothing was installed" ;;
 esac
-[ ${#want} -eq 64 ] || die "SHA256SUMS has no valid entry for ccenv; nothing was installed"
-got=$(sha256 "$TMP/ccenv")
+[ ${#want} -eq 64 ] || die "SHA256SUMS has no valid entry for actas; nothing was installed"
+got=$(sha256 "$TMP/actas")
 [ "$got" = "$want" ] ||
-	die "checksum mismatch for ccenv (expected $want, got $got); nothing was installed"
-head -n 1 "$TMP/ccenv" | grep -q '^#!.*python' ||
-	die "the download is not the ccenv script; nothing was installed"
+	die "checksum mismatch for actas (expected $want, got $got); nothing was installed"
+head -n 1 "$TMP/actas" | grep -q '^#!.*python' ||
+	die "the download is not the actas script; nothing was installed"
 say "sha256 ok: $got"
 
-DEST=$DIR/ccenv
+DEST=$DIR/actas
 if [ -L "$DEST" ]; then
 	if [ "$FORCE" -ne 1 ]; then
 		target=$(readlink "$DEST" 2>/dev/null || echo '?')
@@ -138,8 +140,8 @@ mkdir -p "$DIR" || die "cannot create $DIR"
 
 # Stage next to the destination, then rename: the swap is atomic and a
 # rename replaces a symlink itself, never the file it points to.
-STAGE=$(mktemp "$DIR/.ccenv.XXXXXX") || die "cannot write to $DIR"
-cat "$TMP/ccenv" >"$STAGE"
+STAGE=$(mktemp "$DIR/.actas.XXXXXX") || die "cannot write to $DIR"
+cat "$TMP/actas" >"$STAGE"
 chmod 0755 "$STAGE"
 if [ -L "$DEST" ]; then
 	rm -f "$DEST" # removes the link only; mv would follow a link to a directory
@@ -150,13 +152,18 @@ STAGE=
 if command -v python3 >/dev/null 2>&1; then
 	say "installed $DEST ($(python3 "$DEST" --version 2>/dev/null || echo 'version unknown'))"
 	python3 -c 'import yaml' 2>/dev/null || command -v yq >/dev/null 2>&1 ||
-		say "no PyYAML or yq: ccenv init writes a JSON manifest (for YAML: python3 -m pip install --user pyyaml, or brew install yq)"
+		say "no PyYAML or yq: actas init writes a JSON manifest (for YAML: python3 -m pip install --user pyyaml, or brew install yq)"
 else
-	say "installed $DEST; ccenv needs Python 3.9+ (python3 was not found on PATH)"
+	say "installed $DEST; actas needs Python 3.9+ (python3 was not found on PATH)"
 fi
 case ":${PATH:-}:" in
 	*":$DIR:"*) ;;
 	*) say "$DIR is not on your PATH; add it, e.g.: export PATH=\"$DIR:\$PATH\"" ;;
 esac
+# Legacy: actas was called ccenv. An old install keeps working (synced
+# settings files may still call it); it is left alone.
+if [ -e "$DIR/ccenv" ] || [ -L "$DIR/ccenv" ]; then
+	say "$DIR/ccenv is the old (pre-rename) install and still works; run actas sync so synced files call actas, then remove it, or keep the old name as an alias: ln -sf actas '$DIR/ccenv'"
+fi
 say "optional authenticity check: gh attestation verify '$DEST' --repo $REPO"
-say "next: ccenv init && ccenv doctor"
+say "next: actas init && actas doctor"

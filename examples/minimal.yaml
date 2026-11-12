@@ -10,4 +10,4 @@ profiles:
     git:    { name: Ada Example, email: ada@client-a.example }
     github: { auth: "gh:ada-client-a" }
     aws:    { profile: client-a-dev, region: eu-west-1 }
-    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:ccenv/client-a" }
+    claude: { provider: gateway, base_url: "https://llm.client-a.example", token: "keychain:actas/client-a" }

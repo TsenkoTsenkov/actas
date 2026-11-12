@@ -6,7 +6,7 @@ import json
 import os
 import unittest
 
-from ccenv_testlib import Sandbox, has_yaml
+from actas_testlib import Sandbox, has_yaml
 from test_manifest import V2
 
 V1 = {
@@ -58,7 +58,7 @@ class Status(Sandbox):
     def test_session_mismatch(self):
         prod = self.tmp / "code/client-a/infra/prod"         # the real cwd: an explicit --cwd would choose
         prod.mkdir(parents=True, exist_ok=True)
-        d = self.status(env={"CCENV": "client-a-test", "PWD": str(prod)}, cwd=prod)
+        d = self.status(env={"ACTAS": "client-a-test", "PWD": str(prod)}, cwd=prod)
         self.assertEqual(d["session"], {"profile": "client-a-test", "source": "env", "record_pid": None})
         self.assertEqual((d["profile"], d["matched_by"]), ("client-a-test", "session"))
         self.assertEqual(d["cwd"]["profile"], "client-a-prod")

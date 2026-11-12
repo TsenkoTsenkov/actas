@@ -1,14 +1,17 @@
-# Migrating from ccenv v1 to v2
+# Migrating from v1 to v2
 
 **Short version:** install v2 and keep working. Your v1 manifest runs unchanged.
+v2 is also where ccenv was renamed to actas; an existing ccenv setup keeps
+working, after two steps that the rename needs right away: put `actas` on your
+PATH and replace an installed ccenv skill (see [Coming from ccenv](#coming-from-ccenv)).
 Convert it to version 2 when you want roles, levels and the new modules:
 
 ```bash
-ccenv doctor                       # 1. v2 reads your v1 file; check it
-ccenv sync --dry-run && ccenv sync # 2. refresh synced settings (new helper strings)
-ccenv migrate                      # 3. print the v2 version; nothing is written
-ccenv migrate --write              # 4. switch (the old file is kept as environments.v1.yaml)
-ccenv sync                         # 5. re-sync with the v2 rules
+actas doctor                       # 1. v2 reads your v1 file; check it
+actas sync --dry-run && actas sync # 2. refresh synced settings (new helper strings)
+actas migrate                      # 3. print the v2 version; nothing is written
+actas migrate --write              # 4. switch (the old file is kept as environments.v1.yaml)
+actas sync                         # 5. re-sync with the v2 rules
 ```
 
 Your secrets file is never read or changed by the migration, and every secret
@@ -25,7 +28,7 @@ keeps its v1 location.
 3. **Compose upward.** A profile is at least as privileged as anything it
    `use:`s; `level: readonly` on top of a power role is an error.
 4. **A secret is always `scheme:path`.** For example `sops:client-a/token`,
-   `keychain:ccenv/client-a`, `op://vault/item/field`, `gh:ada-client-a`.
+   `keychain:actas/client-a`, `op://vault/item/field`, `gh:ada-client-a`.
 
 The full reference is in [docs/manifest.md](manifest.md).
 
@@ -33,7 +36,7 @@ The full reference is in [docs/manifest.md](manifest.md).
 
 ## Step 1: upgrade the binary, keep the v1 manifest
 
-ccenv v2 recognises a v1 file (no `version:`, or `version: 1`) and translates
+actas v2 recognises a v1 file (no `version:`, or `version: 1`) and translates
 it in memory on every load. You do not need to change anything to keep
 working. Some behaviour changes anyway, mostly fixes:
 
@@ -44,7 +47,7 @@ working. Some behaviour changes anyway, mostly fixes:
   environment configures:
   - always: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`,
     `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_USE_*`, `CLAUDE_CODE_OAUTH_TOKEN`,
-    and `GIT_CONFIG_*` pairs added by an outer ccenv;
+    and `GIT_CONFIG_*` pairs added by an outer actas;
   - with an `aws:` block: `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`,
     `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
     `AWS_REGION`, `AWS_DEFAULT_REGION`;
@@ -53,15 +56,16 @@ working. Some behaviour changes anyway, mostly fixes:
   An environment **without an `aws:` block keeps your shell's `AWS_PROFILE`**
   (and other `AWS_*`), exactly as v1 did; without a GitHub account it keeps
   your shell's `GH_TOKEN`. Isolating them is a v2 opt-in (`aws: null`, after
-  `ccenv migrate`). `ccenv run` prints what it cleared. Nothing else is touched
+  `actas migrate`). `actas run` prints what it cleared. Nothing else is touched
   for v1 files (`CLAUDE_CONFIG_DIR`, `OPENAI_API_KEY`, `GOOGLE_*`, `ARM_*`
   pass through).
 - Subscription sessions **unset** the three `ANTHROPIC_*` variables instead of
   setting them to `""`. Settings also blank `CLAUDE_CODE_USE_MANTLE` and
   `CLAUDE_CODE_USE_ANTHROPIC_AWS`.
-- New variables in sessions: `CCENV_LEVEL`, `CCENV_SESSION`, `CCENV_AGENT`,
-  `CCENV_GIT_BASE`; in agent sessions also `GH_PROMPT_DISABLED=1`,
-  `GIT_TERMINAL_PROMPT=0` and `AWS_PAGER=`.
+- New variables in sessions: `ACTAS_LEVEL`, `ACTAS_SESSION`, `ACTAS_AGENT`,
+  `ACTAS_GIT_BASE`; in agent sessions also `GH_PROMPT_DISABLED=1`,
+  `GIT_TERMINAL_PROMPT=0` and `AWS_PAGER=`. v1's `CCENV` is now `ACTAS` (see
+  [Coming from ccenv](#coming-from-ccenv)).
 - `secret_env.GH_TOKEN` now also sets `GITHUB_TOKEN`, and git gets a credential
   helper for it. With both `github.account` and `secret_env.GH_TOKEN`, both
   variables are the PAT (v1: `GITHUB_TOKEN` was the account's token).
@@ -80,12 +84,12 @@ working. Some behaviour changes anyway, mostly fixes:
 **Settings and helpers**
 
 - `apiKeyHelper`, `awsAuthRefresh` and the git helper use absolute paths and the
-  `ccenv secret --ref 'sops:<env>/<key>'` form. Old helper strings in synced
-  files keep working (`ccenv secret ENV KEY` is unchanged); the next
-  `ccenv sync` rewrites them.
+  `actas secret --ref 'sops:<env>/<key>'` form. Old helper strings in synced
+  files keep working (v1's `ccenv secret ENV KEY` runs through the deprecated
+  `ccenv` alias); the next `actas sync` rewrites them.
 - `run`'s generated settings now repeat every non-secret variable of the
   session and add a SessionStart hook that prints a one-line note about the
-  profile. The file is named by content hash in `~/.cache/ccenv/` (mode 0600,
+  profile. The file is named by content hash in `~/.cache/actas/` (mode 0600,
   pruned after 7 days).
 
 **sync**
@@ -101,13 +105,13 @@ working. Some behaviour changes anyway, mostly fixes:
 - Synced files now carry **every non-secret session variable**, not only
   v1's provider and AWS keys: the git identity (`user.name`/`user.email`), a
   github.com credential helper that replaces your global one and reads
-  `gh:<account>` through ccenv, `CCENV`/`CCENV_LEVEL`, `GH_PROMPT_DISABLED`,
+  `gh:<account>` through actas, `ACTAS`/`ACTAS_LEVEL`, `GH_PROMPT_DISABLED`,
   `GIT_TERMINAL_PROMPT` and `AWS_PAGER`. Bare `claude`, IDE and Desktop
   sessions in those repos then commit and push as the profile's account.
-- Writes are atomic with mode 0600; a ledger records which keys ccenv owns,
+- Writes are atomic with mode 0600; a ledger records which keys actas owns,
   so your own keys are kept and stale ones removed. v1-written files are
   adopted.
-- New: `--dry-run`, and `--clean`, which removes what ccenv wrote in files no
+- New: `--dry-run`, and `--clean`, which removes what actas wrote in files no
   profile syncs any more (it keeps, unless you add `--force`, a file whose
   removal would let `~/.claude/settings.json`'s `apiKeyHelper` or
   `ANTHROPIC_BASE_URL` apply there). `--shared` is gone (it exits with an error).
@@ -125,10 +129,10 @@ working. Some behaviour changes anyway, mostly fixes:
 
 **Agents**
 
-ccenv now recognises when an AI agent calls it. Inside an agent session:
+actas now recognises when an AI agent calls it. Inside an agent session:
 
 - `run`/`exec` of a profile other than the session's stop with exit code 3 and
-  a first stderr line starting `ccenv-stop:`;
+  a first stderr line starting `actas-stop:`;
 - `login`, `sync` (including `--dry-run`), `init`, `secret --set` /
   `secret set`, `shell` with secrets, `aws-handoff` and `migrate --write` are
   human-only and stop the same way.
@@ -136,21 +140,21 @@ ccenv now recognises when an AI agent calls it. Inside an agent session:
 The agent is expected to show you the printed `ask_user` text; you run the
 command yourself in a separate terminal. See [docs/agents.md](agents.md).
 
-**Unchanged for v1 files** (these change only after `ccenv migrate`):
+**Unchanged for v1 files** (these change only after `actas migrate`):
 
 - no built-in agent permission rules are written;
 - the gateway token is still exported into the session;
 - `gh` does not fail closed (no empty `GH_CONFIG_DIR`): with the token
   missing, gh uses its keyring's active account as in v1. Git HTTPS to
-  github.com always uses ccenv's credential helper, though, so a missing gh
+  github.com always uses actas's credential helper, though, so a missing gh
   token now fails `git push` instead of falling back to your global helper.
 
 ---
 
-## Step 2: what `ccenv migrate` does
+## Step 2: what `actas migrate` does
 
 ```bash
-ccenv migrate
+actas migrate
 ```
 
 - Prints the version 2 translation of your v1 manifest on stdout (YAML; JSON
@@ -162,10 +166,10 @@ ccenv migrate
 - Writes nothing. On a file that is already version 2 it says so and exits.
 
 ```bash
-ccenv migrate --write
+actas migrate --write
 ```
 
-- Copies the current file to `~/.config/ccenv/environments.v1.yaml` and writes
+- Copies the current file to `~/.config/actas/environments.v1.yaml` and writes
   the new one (mode 0600). It refuses if `environments.v1.yaml` already exists.
 - Is human-only: it refuses inside an agent session.
 - Does not carry over comments from the v1 file.
@@ -221,7 +225,7 @@ profiles:
 
 ### What changes once the file says `version: 2`
 
-`ccenv migrate` lists these on stderr:
+`actas migrate` lists these on stderr:
 
 - **Built-in agent rules apply.** Each profile gets its level's preset
   (`standard` unless you set `level:`): Claude asks before `git push`,
@@ -255,18 +259,20 @@ Suggestions it may print:
 ## Step by step
 
 1. **Install v2** the same way you installed v1 (for a git checkout:
-   `git -C <checkout> pull`). The `ccenv` path stays the same, so existing
-   helpers keep resolving.
-2. **Check:** `ccenv doctor` and `ccenv list`. Fix any errors it reports.
-3. **Refresh synced files:** `ccenv sync --dry-run`, then `ccenv sync`. This
+   `git -C <checkout> pull`). The checkout keeps `bin/ccenv` as a link to
+   `bin/actas`, and a uv/pipx install keeps a `ccenv` command, so existing
+   helpers keep resolving. Then do the [steps the rename needs right
+   away](#right-away) (the `actas` command, the skill).
+2. **Check:** `actas doctor` and `actas list`. Fix any errors it reports.
+3. **Refresh synced files:** `actas sync --dry-run`, then `actas sync`. This
    rewrites helper strings to the absolute `--ref` form and starts the ledger.
-4. **Preview the conversion:** `ccenv migrate > /tmp/ccenv-v2.yaml` and read
+4. **Preview the conversion:** `actas migrate > /tmp/actas-v2.yaml` and read
    it together with the stderr notes.
-5. **Switch:** `ccenv migrate --write`.
-6. **Verify:** `ccenv doctor`, then `ccenv status --why` in a few project
-   directories. `ccenv status --why` shows where each value comes from.
-7. **Re-sync:** `ccenv sync` writes the v2 agent rules into synced files.
-8. **Tidy up** (optional, one change at a time, `ccenv doctor` after each):
+5. **Switch:** `actas migrate --write`.
+6. **Verify:** `actas doctor`, then `actas status --why` in a few project
+   directories. `actas status --why` shows where each value comes from.
+7. **Re-sync:** `actas sync` writes the v2 agent rules into synced files.
+8. **Tidy up** (optional, one change at a time, `actas doctor` after each):
    - delete `export_token: true` from gateway profiles;
    - move shared blocks into `roles:` and `use:` them;
    - set `level: readonly` where the credentials really are read-only, and
@@ -275,37 +281,144 @@ Suggestions it may print:
      profile must not see an account;
    - add `agents_may_use:` where an agent may run another profile's commands.
 
-Starting fresh instead? `ccenv init` writes a version 2 starter, so there is
+Starting fresh instead? `actas init` writes a version 2 starter, so there is
 nothing to migrate.
 
 ---
 
 ## Rollback
 
-**Back to the v1 manifest, keeping v2 ccenv** (the safe, common case):
+**Back to the v1 manifest, keeping v2 actas** (the safe, common case):
 
 ```bash
-cp ~/.config/ccenv/environments.yaml ~/ccenv-v2-draft.yaml          # optional: keep your v2 edits
-mv ~/.config/ccenv/environments.v1.yaml ~/.config/ccenv/environments.yaml
-ccenv sync                                                           # removes the v2 rules from synced files
+cp ~/.config/actas/environments.yaml ~/actas-v2-draft.yaml          # optional: keep your v2 edits
+mv ~/.config/actas/environments.v1.yaml ~/.config/actas/environments.yaml
+actas sync                                                           # removes the v2 rules from synced files
 ```
 
 v2 runs the v1 file exactly as in step 1. Secrets are untouched either way.
+
+These commands use `~/.config/actas`. If you never moved your config
+directory after the rename, it is still `~/.config/ccenv`: use that path
+instead (`actas doctor` says which one is in use, on its `config dir` line).
 
 **Back to the v1 binary:** clean up first, because v1 does not understand v2's
 helper strings (`secret --ref`, `git-credential`, the SessionStart hook):
 
 ```bash
 # with v2: an empty manifest makes every synced file stale, so --clean removes
-# what ccenv wrote (--force: also files that hide ~/.claude/settings.json routing)
-mv ~/.config/ccenv/environments.yaml ~/ccenv-v2.yaml
-echo '{"version": 2, "profiles": {}}' > ~/.config/ccenv/environments.yaml
-ccenv sync --clean --force
-# restore the v1 manifest as above, then reinstall v1
+# what actas wrote (--force: also files that hide ~/.claude/settings.json routing)
+# (~/.config/ccenv instead of ~/.config/actas if you never moved it)
+mv ~/.config/actas/environments.yaml ~/actas-v2.yaml
+echo '{"version": 2, "profiles": {}}' > ~/.config/actas/environments.yaml
+actas sync --clean --force
+# restore the v1 manifest as above, then reinstall v1, which is called ccenv
+# and reads only ~/.config/ccenv (move the directory back if you moved it)
 # (for a git checkout: git -C <checkout> checkout <previous commit>)
 ccenv sync                  # with v1
 ```
 
-Optional leftovers you can delete: `~/.local/state/ccenv/` (ledger, audit log,
-session records, managed homes; homes hold logins you made with `ccenv login`)
-and `~/.cache/ccenv/`.
+Optional leftovers you can delete: `~/.local/state/actas/` (ledger, audit log,
+session records, managed homes; homes hold logins you made with `actas login`)
+and `~/.cache/actas/`.
+
+---
+
+## Coming from ccenv
+
+actas was called **ccenv** before 2.0. The rename changes names only. Your
+config, secrets, synced files and the `ccenv` command keep working, but two
+things need a step as soon as you upgrade: agents are now told to run `actas`,
+so it must be on your PATH, and an installed ccenv skill must be replaced
+(see [Right away](#right-away)).
+
+**Automatic** (nothing to do):
+
+- **Config and state.** While `~/.config/actas` does not exist and
+  `~/.config/ccenv` does, actas uses `~/.config/ccenv`; the same for
+  `~/.local/state/ccenv` (ledger, audit log, session records, managed homes).
+  The cache is rebuilt in `~/.cache/actas`.
+- **Variables.** Every `ACTAS*` variable actas reads falls back to the old
+  `CCENV*` spelling when the new one is unset: `CCENV=<profile>` from a synced
+  settings file or direnv, `CCENV_ROOT`, `CCENV_STATE`, `CCENV_AGENT`,
+  `CCENV_PATH_EXTRA` and so on. actas writes only `ACTAS*`, and `run`, `exec`
+  and `shell` drop a stale `CCENV`, `CCENV_LEVEL` and `CCENV_GIT_BASE` (and
+  `CCENV_AGENT` when they set `ACTAS_AGENT`), so read `$ACTAS` now where you
+  read `$CCENV`. For the agent gate the old names count exactly like the new
+  ones (an agent cannot get around it by setting `CCENV_ROOT`).
+- **Running sessions.** While the state directory is still
+  `~/.local/state/ccenv`, records written by a `ccenv run` that is still open
+  are found, so its agents keep their reach. Once you move it (step 2 below),
+  those agents are refused with `override`, which is why the move needs no
+  session open.
+- **Synced settings files.** Files written by ccenv (the `ccenv secret ENV
+  KEY` or `.../ccenv secret --ref` helper, the SessionStart hook, `CCENV*`
+  variables) are recognised as tool-written. The next `actas sync` rewrites
+  them in the new form and removes the `CCENV*` variables.
+- **The `ccenv` command** is a deprecated alias of the same program (a second
+  console script in uv/pipx installs, `bin/ccenv` in a git checkout), so the
+  helper strings in files synced before the rename keep working. Run from a
+  terminal it reminds you of the new name. `use ccenv` in an `.envrc` keeps
+  working too (`contrib/direnvrc` defines it as an alias of `use actas`).
+
+**Getting the `actas` command.** The package is now called `actas`:
+
+- uv or pipx: `uv tool uninstall ccenv && uv tool install
+  git+https://github.com/TsenkoTsenkov/actas` (or the same with `pipx`). The
+  new package installs both `actas` and the `ccenv` alias, at the same place,
+  so helper strings in synced files keep resolving.
+- A git checkout: `git -C <checkout> pull`, then
+  `ln -s <checkout>/bin/actas ~/.local/bin/actas`. An existing
+  `~/.local/bin/ccenv` link keeps working: `bin/ccenv` in the checkout is a
+  link to `bin/actas`.
+- install.sh: run the new one; it installs `actas` next to your old `ccenv`
+  file and leaves that file alone.
+
+### Right away
+
+Do these when you upgrade; `actas doctor` warns about each until it is done.
+
+1. **The `actas` command on your PATH** (above). The SessionStart note, the
+   agent instructions and the refusals all say `actas ...`; with only the
+   `ccenv` alias installed, agents and you get `command not found`
+   (doctor: `actas cmd`).
+2. **The Claude Code skill.** It is now `skills/actas` (skill name `actas`).
+   A `~/.claude/skills/ccenv` that links to a checkout's `skills/ccenv` points
+   nowhere after the pull, and Claude Code drops the skill without a message.
+   A copied one still looks for `ccenv-stop:` lines, which actas no longer
+   prints. Replace it (doctor: `skill`):
+
+   ```bash
+   rm ~/.claude/skills/ccenv          # a link; rm -r if it is a copied directory
+   ln -s <checkout>/skills/actas ~/.claude/skills/actas   # or copy the directory
+   ```
+
+3. **AGENTS.md blocks** you pasted from `ccenv instructions` also look for
+   `ccenv-stop:`: replace them with the output of `actas instructions`.
+   Refusals stay safe without this (the gate still refuses with exit 3 and
+   says to show you the text and stop), but the old marker no longer matches.
+
+### Optional, at your own pace
+
+Run `actas doctor` after each:
+
+1. Run `actas sync`, so synced files call `actas` instead of `ccenv`.
+2. Move the directories, with no actas or ccenv session open (open sessions
+   recorded the old path, and their agents would be refused with `override`):
+
+   ```bash
+   mv ~/.config/ccenv ~/.config/actas
+   mv ~/.local/state/ccenv ~/.local/state/actas     # or $XDG_STATE_HOME/ccenv
+   rm -rf ~/.cache/ccenv
+   ```
+
+   `actas doctor` prints these lines while the old directories are in use.
+3. Rename variables you export yourself: `CCENV_ROOT` → `ACTAS_ROOT`,
+   `CCENV_STATE` → `ACTAS_STATE`, `CCENV_AGENT` → `ACTAS_AGENT`,
+   `CCENV_PATH_EXTRA` → `ACTAS_PATH_EXTRA`, and anything that reads `$CCENV`
+   (a prompt, a script) → `$ACTAS`.
+4. Replace `use ccenv` with `use actas` in `.envrc` files, and update your
+   `~/.config/direnv/direnvrc` from `actas instructions --direnv`.
+5. Secret refs you named after the tool, such as `keychain:ccenv/client-a`,
+   keep working as they are; the name inside a ref is only a label.
+6. Stop typing `ccenv`. The alias will be removed in a later major version.

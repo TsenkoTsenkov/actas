@@ -1,9 +1,9 @@
 """Packaging: the wheel build hook (hatch_build.py) and install.sh.
 
 install.sh runs against a fake `curl` that serves files from a temp
-"release" directory, with HOME, CCENV_ROOT, CCENV_STATE and the XDG dirs in
+"release" directory, with HOME, ACTAS_ROOT, ACTAS_STATE and the XDG dirs in
 temp dirs and the fake gh/aws/sops binaries first on PATH. Nothing touches
-the network. A real `uv build` is opt-in: CCENV_TEST_BUILD=1 (CI's package
+the network. A real `uv build` is opt-in: ACTAS_TEST_BUILD=1 (CI's package
 job builds the wheel itself).
 """
 
@@ -19,7 +19,7 @@ import types
 import unittest
 from pathlib import Path
 
-from ccenv_testlib import BIN, REPO, SYSTEM_PATH, make_fakebin
+from actas_testlib import BIN, REPO, SYSTEM_PATH, make_fakebin
 
 INSTALL_SH = REPO / "install.sh"
 
@@ -51,7 +51,7 @@ def load_hook():
     sys.modules[names[-1]].BuildHookInterface = object
     try:
         # exec, not import: no __pycache__ is written into the repo
-        mod = types.ModuleType("ccenv_hatch_build")
+        mod = types.ModuleType("actas_hatch_build")
         path = REPO / "hatch_build.py"
         exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), mod.__dict__)
         return mod
@@ -72,7 +72,7 @@ class Isolated(unittest.TestCase):
         self.bin = make_fakebin(self.tmp / "fakebin")
         self.env = {
             "HOME": str(self.home), "PATH": f"{self.bin}:{SYSTEM_PATH}",
-            "CCENV_ROOT": str(self.tmp / "cfg"), "CCENV_STATE": str(self.tmp / "state"),
+            "ACTAS_ROOT": str(self.tmp / "cfg"), "ACTAS_STATE": str(self.tmp / "state"),
             "XDG_CACHE_HOME": str(self.tmp / "cache"), "XDG_STATE_HOME": str(self.tmp / "xstate"),
             "TMPDIR": str(self.tmp), "LANG": "C", "NO_COLOR": "1",
         }
@@ -92,32 +92,32 @@ class BuildHook(Isolated):
             hook.package_source(src.replace('BUILD = "script"', 'BUILD = "other"'))
 
     def test_version_is_single_sourced(self):
-        # hatchling's default version pattern must find __version__ in bin/ccenv.
+        # hatchling's default version pattern must find __version__ in bin/actas.
         m = re.search(r'(?im)^(__version__|VERSION) *= *([\'"])v?(?P<version>.+?)\2',
                       BIN.read_text(encoding="utf-8"))
         self.assertIsNotNone(m)
-        self.assertIn('ccenv = "ccenv_cli:main"', (REPO / "pyproject.toml").read_text())
+        self.assertIn('actas = "actas_cli:main"', (REPO / "pyproject.toml").read_text())
 
     def test_generated_module_runs_as_console_script(self):
         pkg = self.tmp / "site"
         pkg.mkdir()
-        (pkg / "ccenv_cli.py").write_text(load_hook().package_source(BIN.read_text(encoding="utf-8")))
-        code = ("import sys, ccenv_cli; print(ccenv_cli.BUILD); "
-                "sys.argv = ['ccenv', '--version']; ccenv_cli.main()")
+        (pkg / "actas_cli.py").write_text(load_hook().package_source(BIN.read_text(encoding="utf-8")))
+        code = ("import sys, actas_cli; print(actas_cli.BUILD); "
+                "sys.argv = ['actas', '--version']; actas_cli.main()")
         r = subprocess.run([sys.executable, "-c", code], cwd=str(self.tmp), capture_output=True,
                            text=True, env=dict(self.env, PYTHONPATH=str(pkg)))
         version = re.search(r'__version__ = "([^"]+)"', BIN.read_text()).group(1)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.split(), ["package", "ccenv", version])
+        self.assertEqual(r.stdout.split(), ["package", "actas", version])
 
-    @unittest.skipUnless(os.environ.get("CCENV_TEST_BUILD") and shutil.which("uv"),
-                         "set CCENV_TEST_BUILD=1 (needs uv and network for hatchling)")
+    @unittest.skipUnless(os.environ.get("ACTAS_TEST_BUILD") and shutil.which("uv"),
+                         "set ACTAS_TEST_BUILD=1 (needs uv and network for hatchling)")
     def test_uv_build(self):
         r = subprocess.run(["uv", "build", "--wheel", "-o", str(self.tmp / "dist"), str(REPO)],
                            capture_output=True, text=True,
                            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(len(list((self.tmp / "dist").glob("ccenv-*.whl"))), 1)
+        self.assertEqual(len(list((self.tmp / "dist").glob("actas-*.whl"))), 1)
 
 
 class InstallScript(Isolated):
@@ -126,7 +126,7 @@ class InstallScript(Isolated):
         self.release = self.tmp / "release"
         self.release.mkdir()
         self.payload = BIN.read_bytes()
-        (self.release / "ccenv").write_bytes(self.payload)
+        (self.release / "actas").write_bytes(self.payload)
         self.write_sums(hashlib.sha256(self.payload).hexdigest())
         curl = self.bin / "curl"
         curl.write_text(FAKE_CURL)
@@ -134,10 +134,10 @@ class InstallScript(Isolated):
         (self.bin / "python3").symlink_to(sys.executable)
         self.curl_log = self.tmp / "curl.log"
         self.env.update(FAKE_RELEASE=str(self.release), FAKE_CURL_LOG=str(self.curl_log))
-        self.dest = self.home / ".local" / "bin" / "ccenv"
+        self.dest = self.home / ".local" / "bin" / "actas"
 
     def write_sums(self, digest):
-        (self.release / "SHA256SUMS").write_text(f"{digest}  ccenv\n{'0' * 64}  install.sh\n")
+        (self.release / "SHA256SUMS").write_text(f"{digest}  actas\n{'0' * 64}  install.sh\n")
 
     def install(self, *args, shell="sh"):
         return subprocess.run([shell, str(INSTALL_SH)] + list(args), cwd=str(self.tmp),
@@ -147,7 +147,7 @@ class InstallScript(Isolated):
         return self.curl_log.read_text().split()
 
     def leftovers(self):
-        return [p.name for p in self.dest.parent.iterdir() if p.name.startswith(".ccenv.")]
+        return [p.name for p in self.dest.parent.iterdir() if p.name.startswith(".actas.")]
 
     def test_installs_latest_with_checksum(self):
         shells = ["sh"] + (["dash"] if shutil.which("dash") else [])
@@ -159,24 +159,24 @@ class InstallScript(Isolated):
                 self.assertEqual(stat.S_IMODE(self.dest.stat().st_mode), 0o755)
                 self.assertIn("sha256 ok", r.stdout)
                 self.assertIn("gh attestation verify", r.stdout)
-                self.assertIn("ccenv 2.", r.stdout)       # ran the installed file
+                self.assertIn("actas 2.", r.stdout)       # ran the installed file
                 self.assertEqual(self.leftovers(), [])
-        self.assertIn("https://github.com/TsenkoTsenkov/ccenv/releases/latest/download/ccenv",
+        self.assertIn("https://github.com/TsenkoTsenkov/actas/releases/latest/download/actas",
                       self.urls())
 
     def test_given_version_and_upgrade_in_place(self):
         self.dest.parent.mkdir(parents=True)
         self.dest.write_text("old")
-        r = self.install("--version", "2.0.0", "--repo", "example-org/ccenv")
+        r = self.install("--version", "2.0.0", "--repo", "example-org/actas")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.dest.read_bytes(), self.payload)
         self.assertEqual(self.urls()[:2], [
-            "https://github.com/example-org/ccenv/releases/download/v2.0.0/ccenv",
-            "https://github.com/example-org/ccenv/releases/download/v2.0.0/SHA256SUMS"])
+            "https://github.com/example-org/actas/releases/download/v2.0.0/actas",
+            "https://github.com/example-org/actas/releases/download/v2.0.0/SHA256SUMS"])
 
     # F43: `latest` never resolves to a prerelease; say how to install one.
     def test_missing_latest_release_hints_at_prereleases(self):
-        (self.release / "ccenv").unlink()
+        (self.release / "actas").unlink()
         r = self.install()
         self.assertEqual(r.returncode, 1)
         self.assertIn("for a prerelease pass --version TAG", r.stderr)
@@ -198,7 +198,7 @@ class InstallScript(Isolated):
         self.assertFalse(self.dest.exists())
 
     def test_symlink_refused_without_force_then_link_replaced(self):
-        checkout = self.tmp / "checkout-ccenv"
+        checkout = self.tmp / "checkout-actas"
         checkout.write_text("checkout copy")
         self.dest.parent.mkdir(parents=True)
         self.dest.symlink_to(checkout)
@@ -227,7 +227,7 @@ class InstallScript(Isolated):
         d = self.tmp / "tools"
         r = self.install("--dir", str(d))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual((d / "ccenv").read_bytes(), self.payload)
+        self.assertEqual((d / "actas").read_bytes(), self.payload)
         self.assertIn("not on your PATH", r.stdout)
 
     def test_posix_syntax(self):

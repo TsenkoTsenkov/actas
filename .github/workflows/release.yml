@@ -1,11 +1,11 @@
 name: release
 
-# On a version tag (v2.0.0, v2.1.0b1, ...): attach the single-file ccenv,
+# On a version tag (v2.0.0, v2.1.0b1, ...): attach the single-file actas,
 # install.sh and SHA256SUMS to a GitHub release, with a build-provenance
-# attestation for ccenv. Nothing is published to PyPI.
+# attestation for actas. Nothing is published to PyPI.
 #
 # Users can check a download with:
-#   gh attestation verify ccenv --repo <owner>/ccenv
+#   gh attestation verify actas --repo <owner>/actas
 
 on:
   push:
@@ -31,21 +31,21 @@ jobs:
           python-version: "3.13"
       - name: Run the tests
         run: python -m unittest discover -s tests
-      - name: The tag matches __version__ in bin/ccenv
+      - name: The tag matches __version__ in bin/actas
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          version="$(python bin/ccenv --version | awk '{ print $2 }')"
-          test "$TAG" = "v$version" || { echo "tag $TAG does not match ccenv $version" >&2; exit 1; }
+          version="$(python bin/actas --version | awk '{ print $2 }')"
+          test "$TAG" = "v$version" || { echo "tag $TAG does not match actas $version" >&2; exit 1; }
       - name: Build the assets
         run: |
           mkdir dist
-          install -m 0755 bin/ccenv dist/ccenv
+          install -m 0755 bin/actas dist/actas
           install -m 0755 install.sh dist/install.sh
-          cd dist && sha256sum ccenv install.sh > SHA256SUMS && cat SHA256SUMS
+          cd dist && sha256sum actas install.sh > SHA256SUMS && cat SHA256SUMS
       - uses: actions/attest@v4
         with:
-          subject-path: dist/ccenv
+          subject-path: dist/actas
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,5 +53,5 @@ jobs:
         run: |
           pre=""
           case "${TAG#v}" in *[a-z]*) pre="--prerelease" ;; esac
-          gh release create "$TAG" dist/ccenv dist/install.sh dist/SHA256SUMS \
-            --repo "$GITHUB_REPOSITORY" --title "ccenv $TAG" --generate-notes --verify-tag $pre
+          gh release create "$TAG" dist/actas dist/install.sh dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "actas $TAG" --generate-notes --verify-tag $pre

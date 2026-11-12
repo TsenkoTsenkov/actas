@@ -1,6 +1,6 @@
 """M4 (2.0.0-beta1): guardrails. Agent policy presets rendered as Claude rules
 (SPEC 7), agent detection (8.2), the process table and session records plus
-the elevation gate (8.3), `ccenv-stop:` refusals, exit codes 3/4, ask_user
+the elevation gate (8.3), `actas-stop:` refusals, exit codes 3/4, ask_user
 and the --json payload (8.4, 10.4), the audit log (8.5), human-only commands,
 aws-handoff (10.2, D26) and status --probe.
 
@@ -15,7 +15,7 @@ import os
 import shlex
 import unittest
 
-from ccenv_testlib import Sandbox, make_fakebin
+from actas_testlib import Sandbox, make_fakebin
 
 T0 = "Wed Nov 11 09:00:00 2026"
 T1 = "Wed Nov 11 10:00:00 2026"
@@ -69,7 +69,7 @@ class Base(Sandbox):
 
     def call(self, *argv, env=None, ps=None, confirm=None, overrides=False, cwd=None):
         """main(argv) in-process -> (exit code, stdout, stderr). env: extra
-        variables (None removes one). Agent tests drop CCENV_ROOT/STATE unless
+        variables (None removes one). Agent tests drop ACTAS_ROOT/STATE unless
         overrides is True (the module already resolved its paths). cwd: the
         process's working directory for the call."""
         saved, here = dict(os.environ), os.getcwd()
@@ -77,8 +77,8 @@ class Base(Sandbox):
             os.chdir(cwd)
             os.environ["PWD"] = str(cwd)        # macOS: /var is a link to /private/var
         if not overrides:
-            os.environ.pop("CCENV_ROOT", None)
-            os.environ.pop("CCENV_STATE", None)
+            os.environ.pop("ACTAS_ROOT", None)
+            os.environ.pop("ACTAS_STATE", None)
         for k, v in (env or {}).items():
             if v is None:
                 os.environ.pop(k, None)
@@ -112,10 +112,10 @@ AGENT = {"CLAUDECODE": "1"}
 
 
 class GateTruthTable(Base):
-    """SPEC 8.3 gate: agent/human x record/no record x CCENV x levels x
+    """SPEC 8.3 gate: agent/human x record/no record x ACTAS x levels x
     agents_may_use x confirm x overrides (SPEC tests 44-51)."""
 
-    # (who, record profile, $CCENV, target, expected: "allow:<profile>" or a refusal reason)
+    # (who, record profile, $ACTAS, target, expected: "allow:<profile>" or a refusal reason)
     AGENT_CASES = [
         ("rec std, default target is the session (cwd is ro)", "std", None, None, "allow:std"),
         ("rec std, own profile", "std", None, "std", "allow:std"),
@@ -125,34 +125,34 @@ class GateTruthTable(Base):
         ("rec std, listed but higher", "std", None, "pwf", "elevation"),
         ("rec std, listed confirm", "std", None, "conf", "confirm"),
         ("rec conf, its own confirm profile", "conf", None, "conf", "confirm"),
-        ("rec std, CCENV spoofs conf", "std", "conf", "conf", "confirm"),
-        ("rec ro, CCENV spoofs pwf", "ro", "pwf", "pwf", "not_allowed"),
-        ("rec ro, CCENV spoofs std", "ro", "std", None, "allow:ro"),
+        ("rec std, ACTAS spoofs conf", "std", "conf", "conf", "confirm"),
+        ("rec ro, ACTAS spoofs pwf", "ro", "pwf", "pwf", "not_allowed"),
+        ("rec ro, ACTAS spoofs std", "ro", "std", None, "allow:ro"),
         ("rec pwf, anchored power", "pwf", None, "pwf", "allow:pwf"),
-        ("no rec, no CCENV, readonly of the cwd", None, None, "ro", "allow:ro"),
-        ("no rec, no CCENV, another readonly", None, None, "ro2", "no_session"),
-        ("no rec, no CCENV, standard", None, None, "std", "no_session"),
-        ("no rec, no CCENV, default = cwd ro", None, None, None, "allow:ro"),
-        ("no rec, CCENV std, self", None, "std", "std", "allow:std"),
-        ("no rec, CCENV std, listed lower", None, "std", "ro2", "allow:ro2"),
-        ("no rec, CCENV std, higher", None, "std", "pwf", "elevation"),
-        ("no rec, CCENV pwf, unanchored power", None, "pwf", "pwf", "unanchored"),
-        ("no rec, CCENV names no profile", None, "nope", "std", "no_session"),
+        ("no rec, no ACTAS, readonly of the cwd", None, None, "ro", "allow:ro"),
+        ("no rec, no ACTAS, another readonly", None, None, "ro2", "no_session"),
+        ("no rec, no ACTAS, standard", None, None, "std", "no_session"),
+        ("no rec, no ACTAS, default = cwd ro", None, None, None, "allow:ro"),
+        ("no rec, ACTAS std, self", None, "std", "std", "allow:std"),
+        ("no rec, ACTAS std, listed lower", None, "std", "ro2", "allow:ro2"),
+        ("no rec, ACTAS std, higher", None, "std", "pwf", "elevation"),
+        ("no rec, ACTAS pwf, unanchored power", None, "pwf", "pwf", "unanchored"),
+        ("no rec, ACTAS names no profile", None, "nope", "std", "no_session"),
     ]
 
     def check(self, label, code, out, err, expect, target):
         if expect.startswith("allow:"):
             self.assertEqual(code, 0, f"{label}: {err}")
             self.assertEqual(len(self.execs), 1, label)
-            self.assertEqual(self.execs[-1][1]["CCENV"], expect[6:], label)
+            self.assertEqual(self.execs[-1][1]["ACTAS"], expect[6:], label)
         else:
             self.assertEqual(code, 3, f"{label}: {err}")
             self.assertEqual(self.execs, [], label)
             self.assertEqual(err.splitlines()[0],
-                             f"ccenv-stop: code=needs_user reason={expect} profile={target}", label)
+                             f"actas-stop: code=needs_user reason={expect} profile={target}", label)
 
     def test_agent_branch(self):
-        for label, rec, ccenv, target, expect in self.AGENT_CASES:
+        for label, rec, actas, target, expect in self.AGENT_CASES:
             with self.subTest(label):
                 self.execs.clear()
                 for f in self.m.SESSIONS.glob("*.json") if self.m.SESSIONS.exists() else []:
@@ -160,7 +160,7 @@ class GateTruthTable(Base):
                 if rec:
                     self.record(rec)
                 argv = ["exec"] + ([target] if target else [])
-                code, out, err = self.call(*argv, "--", "true", env=dict(AGENT, CCENV=ccenv),
+                code, out, err = self.call(*argv, "--", "true", env=dict(AGENT, ACTAS=actas),
                                            cwd=self.tmp / "code" / "ro")
                 self.check(label, code, out, err, expect, target or ("std" if rec == "std" else "ro"))
                 self.assertEqual(self.prompts, [], "the agent branch never prompts")
@@ -177,7 +177,7 @@ class GateTruthTable(Base):
 
     def test_env_markers_alone(self):
         for marker in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION", "CODEX_SANDBOX_NETWORK_DISABLED",
-                       "GEMINI_CLI", "CCENV_AGENT"):
+                       "GEMINI_CLI", "ACTAS_AGENT"):
             code, _, err = self.call("exec", "std", "--", "true", env={marker: "1"}, ps="")
             self.assertEqual(code, 3, marker)
             self.assertIn("reason=no_session", err.splitlines()[0], marker)
@@ -189,7 +189,7 @@ class GateTruthTable(Base):
         self.record("std")                                          # same root: fine
         code, _, err = self.call("exec", "std", "--", "true", env=AGENT, overrides=True)
         self.assertEqual(code, 0, err)
-        self.m.SESSIONS.joinpath(f"{REC_PID}.json").unlink()        # no record + CCENV_ROOT set
+        self.m.SESSIONS.joinpath(f"{REC_PID}.json").unlink()        # no record + ACTAS_ROOT set
         code, _, err = self.call("exec", "ro", "--", "true", env=AGENT, overrides=True)
         self.assertIn("reason=override profile=ro", err.splitlines()[0])
 
@@ -205,27 +205,27 @@ class GateTruthTable(Base):
 
     def test_cd_into_another_profile_changes_nothing(self):  # SPEC test 47
         self.record("std")
-        code, _, err = self.call("exec", "--", "true", env=dict(AGENT, CCENV=None), cwd=self.tmp / "code" / "ro")
+        code, _, err = self.call("exec", "--", "true", env=dict(AGENT, ACTAS=None), cwd=self.tmp / "code" / "ro")
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.execs[-1][1]["CCENV"], "std")
+        self.assertEqual(self.execs[-1][1]["ACTAS"], "std")
 
     def test_human_branch(self):  # SPEC tests 51, 54
-        cases = [  # (CCENV, target, typed, expected code, prompted)
+        cases = [  # (ACTAS, target, typed, expected code, prompted)
             (None, "std", None, 0, False),
             (None, "pwf", None, 0, False),            # power without confirm, no session: no prompt
             ("std", "ro2", None, 0, False),           # lower: no prompt
-            ("std", "std", None, 0, False),           # direnv CCENV + no tty + no markers: human
-            ("ro", "std", "std", 0, True),            # elevation over $CCENV, confirmed
+            ("std", "std", None, 0, False),           # direnv ACTAS + no tty + no markers: human
+            ("ro", "std", "std", 0, True),            # elevation over $ACTAS, confirmed
             (None, "conf", "conf", 0, True),
             (None, "conf", "wrong", 1, True),
             (None, "conf", None, 3, True),             # no terminal
         ]
-        for ccenv, target, typed, rc, prompted in cases:
-            with self.subTest(ccenv=ccenv, target=target, typed=typed):
+        for actas, target, typed, rc, prompted in cases:
+            with self.subTest(actas=actas, target=target, typed=typed):
                 self.prompts.clear()
                 self.execs.clear()
                 code, _, err = self.call("exec", target, "--", "terraform", "apply", "-auto-approve",
-                                         env={"CCENV": ccenv}, confirm=typed, ps=self.ps(), overrides=True)
+                                         env={"ACTAS": actas}, confirm=typed, ps=self.ps(), overrides=True)
                 self.assertEqual(code, rc, err)
                 self.assertEqual(bool(self.prompts), prompted)
                 self.assertEqual(len(self.execs), 1 if rc == 0 else 0)
@@ -234,7 +234,7 @@ class GateTruthTable(Base):
                     self.assertIn(f"-> {target} (", self.prompts[0])
                 if rc == 3:
                     self.assertEqual(err.splitlines()[0],
-                                     f"ccenv-stop: code=needs_user reason=no_tty profile={target}")
+                                     f"actas-stop: code=needs_user reason=no_tty profile={target}")
                 if rc == 1:
                     self.assertIn("not confirmed", err)
         decisions = [x["decision"] for x in self.audit_lines() if x["action"] == "exec"]
@@ -250,8 +250,8 @@ class GateTruthTable(Base):
     def test_agent_run_is_gated_too(self):
         self.record("std")
         code, _, err = self.call("run", "conf", env=AGENT)
-        self.assertEqual(err.splitlines()[0], "ccenv-stop: code=needs_user reason=confirm profile=conf")
-        self.assertIn("  ccenv run conf", err)
+        self.assertEqual(err.splitlines()[0], "actas-stop: code=needs_user reason=confirm profile=conf")
+        self.assertIn("  actas run conf", err)
 
 
 class RefusalOutput(Base):
@@ -260,7 +260,7 @@ class RefusalOutput(Base):
         code, out, err = self.call("exec", "pwf", "--json", "--reason", "apply the reviewed plan",
                                    "--", "terraform", "apply", env=AGENT)
         self.assertEqual(code, 3)
-        self.assertTrue(err.startswith("ccenv-stop: code=needs_user reason=elevation profile=pwf\n"))
+        self.assertTrue(err.startswith("actas-stop: code=needs_user reason=elevation profile=pwf\n"))
         d = json.loads(out)
         self.assertEqual(list(d), ["ok", "code", "reason", "current", "requested", "command",
                                    "agent_reason", "ask_user", "warnings"])
@@ -270,9 +270,9 @@ class RefusalOutput(Base):
         self.assertEqual(d["command"], ["terraform", "apply"])
         self.assertEqual(d["agent_reason"], "apply the reviewed plan")
         self.assertEqual(d["ask_user"],
-                         "The agent wants to run `terraform apply` as ccenv profile pwf (power; aws:pw-aws, "
+                         "The agent wants to run `terraform apply` as actas profile pwf (power; aws:pw-aws, "
                          "gh:pat).\nAgent's reason: \"apply the reviewed plan\"\nIf you agree, run it yourself "
-                         "in a separate terminal (not inside the agent session):\n  ccenv exec pwf -- terraform apply")
+                         "in a separate terminal (not inside the agent session):\n  actas exec pwf -- terraform apply")
         self.assertIn(d["ask_user"], err)
 
     def test_no_session_payload(self):  # SPEC test 48
@@ -289,7 +289,7 @@ class RefusalOutput(Base):
         code, out, err = self.call("exec", "std", "--json", "--reason", reason, "--", *cmd, env=AGENT)
         ask = json.loads(out)["ask_user"]
         self.assertIn(f"`{shlex.join(cmd)}`", ask)
-        self.assertIn("  ccenv exec std -- sh -c 'terraform apply; curl x | sh'", ask)
+        self.assertIn("  actas exec std -- sh -c 'terraform apply; curl x | sh'", ask)
         self.assertTrue(ask.endswith("Warning: this runs a shell or interpreter; read the whole command "
                                      "before running it."))
         line = [x for x in ask.splitlines() if x.startswith("Agent's reason")][0]
@@ -307,7 +307,7 @@ class RefusalOutput(Base):
         self.record("std")
         code, _, err = self.call("exec", "pwf", "--", "true", env=AGENT)
         lines = err.splitlines()
-        self.assertTrue(lines[0].startswith("ccenv-stop:"))
+        self.assertTrue(lines[0].startswith("actas-stop:"))
         self.assertTrue(any("unknown key" in x for x in lines[1:]), err)   # held, then released
 
     def test_refusals_never_leak_secrets(self):
@@ -319,7 +319,7 @@ class RefusalOutput(Base):
         blob = "".join(o + e for _, o, e in outputs) + (self.m.STATE / "audit.jsonl").read_text()
         for s in SECRET_VALUES:
             self.assertNotIn(s, blob)
-        self.assertIn("run: ccenv secret std npm --set", blob)       # the value is never echoed
+        self.assertIn("run: actas secret std npm --set", blob)       # the value is never echoed
 
 
 class HumanOnly(Base):
@@ -334,8 +334,8 @@ class HumanOnly(Base):
                 code, out, err = self.call(*argv, env=AGENT)
                 self.assertEqual(code, 3, err)
                 first = err.splitlines()[0]
-                self.assertTrue(first.startswith("ccenv-stop: code=needs_user reason=human_only profile="), first)
-                self.assertIn("In your own terminal (not inside the agent session), run: ccenv " + argv[0], err)
+                self.assertTrue(first.startswith("actas-stop: code=needs_user reason=human_only profile="), first)
+                self.assertIn("In your own terminal (not inside the agent session), run: actas " + argv[0], err)
         self.assertEqual(self.calls(), [], "nothing ran")
         self.assertFalse((self.m.STATE / "sync-ledger.json").exists())
         self.assertFalse((self.root / ".sops.yaml").exists())
@@ -346,7 +346,7 @@ class HumanOnly(Base):
                      ["list"], ["doctor"], ["instructions"], ["migrate"], ["secret", "--ref", "sops:std/npm"]):
             with self.subTest(argv=argv):
                 code, out, err = self.call(*argv, "--cwd", str(self.tmp / "code" / "std"), env=AGENT)
-                self.assertNotIn("ccenv-stop", err)
+                self.assertNotIn("actas-stop", err)
                 self.assertNotEqual(code, 3, err)
         reads = [x for x in self.audit_lines() if x["action"] == "secret-read"]
         self.assertEqual(reads[0]["refs"], ["sops:std/npm"])
@@ -366,7 +366,7 @@ class Records(Base):
         code, _, err = self.call("run", "std", "--no-check", ps=self.ps(), overrides=True)
         self.assertEqual(code, 0, err)
         env = self.execs[0][1]
-        self.assertEqual(env["CCENV_SESSION"], str(ME))
+        self.assertEqual(env["ACTAS_SESSION"], str(ME))
         f = self.m.SESSIONS / f"{ME}.json"
         rec = json.loads(f.read_text())
         self.assertEqual({k: rec[k] for k in ("pid", "start", "profile", "level", "root", "state")},
@@ -411,18 +411,18 @@ class EndToEnd(Base):
 
     def setUp(self):
         super().setUp()
-        # Agent tests cannot carry CCENV_ROOT/CCENV_STATE (that is an override),
+        # Agent tests cannot carry ACTAS_ROOT/ACTAS_STATE (that is an override),
         # so use the default layout under the temp HOME and XDG_STATE_HOME.
-        cfg = self.home / ".config" / "ccenv"
+        cfg = self.home / ".config" / "actas"
         cfg.mkdir(parents=True)
         for f in ("environments.yaml", "secrets.enc.yaml"):
             (cfg / f).write_text((self.root / f).read_text())
-        self.e2e = {"CCENV_ROOT": None, "CCENV_STATE": None, "CLAUDECODE": "1"}
-        os.environ.pop("CCENV_ROOT")
-        os.environ.pop("CCENV_STATE")
+        self.e2e = {"ACTAS_ROOT": None, "ACTAS_STATE": None, "CLAUDECODE": "1"}
+        os.environ.pop("ACTAS_ROOT")
+        os.environ.pop("ACTAS_STATE")
         self.reload()
         self.start = self.m.ps_table()[ME][1]                   # this process: an ancestor of the CLI
-        self.sessions = self.tmp / "xstate" / "ccenv" / "sessions"
+        self.sessions = self.tmp / "xstate" / "actas" / "sessions"
 
     def cli_env(self, *args, env=None, cwd=None):
         e = {k: v for k, v in os.environ.items()}
@@ -437,37 +437,37 @@ class EndToEnd(Base):
         finally:
             os.environ.clear()
             os.environ.update(self.env)
-            os.environ.pop("CCENV_ROOT", None)
-            os.environ.pop("CCENV_STATE", None)
+            os.environ.pop("ACTAS_ROOT", None)
+            os.environ.pop("ACTAS_STATE", None)
 
     def write_rec(self, profile):
         self.sessions.mkdir(parents=True, exist_ok=True)
         (self.sessions / f"{ME}.json").write_text(json.dumps({
             "pid": ME, "start": self.start, "profile": profile, "level": "standard",
-            "root": str(self.home / ".config" / "ccenv"), "state": str(self.tmp / "xstate" / "ccenv")}))
+            "root": str(self.home / ".config" / "actas"), "state": str(self.tmp / "xstate" / "actas")}))
 
     def test_record_of_the_test_process_governs(self):  # SPEC test 44
         self.write_rec("std")
-        r = self.cli_env("exec", "--", "printenv", "CCENV", env=self.e2e, cwd=self.tmp / "code" / "ro")
+        r = self.cli_env("exec", "--", "printenv", "ACTAS", env=self.e2e, cwd=self.tmp / "code" / "ro")
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "std"), r.stderr)
         r = self.cli_env("exec", "pwf", "--", "true", env=self.e2e)
         self.assertEqual(r.returncode, 3)
-        self.assertEqual(r.stderr.splitlines()[0], "ccenv-stop: code=needs_user reason=elevation profile=pwf")
+        self.assertEqual(r.stderr.splitlines()[0], "actas-stop: code=needs_user reason=elevation profile=pwf")
 
     def test_ancestor_name_alone_is_agent_context(self):
-        env = {"CCENV_ROOT": None, "CCENV_STATE": None, "FAKE_PS_AS": f"{ME}:claude"}
+        env = {"ACTAS_ROOT": None, "ACTAS_STATE": None, "FAKE_PS_AS": f"{ME}:claude"}
         d = json.loads(self.cli_env("status", "std", "--json", env=env).stdout)
         self.assertEqual(d["agent"], {"detected": True, "signals": ["ancestor:claude"]})
         r = self.cli_env("sync", env=env)
         self.assertEqual(r.returncode, 3)
-        self.assertTrue(r.stderr.startswith("ccenv-stop: code=needs_user reason=human_only profile=-\n"))
+        self.assertTrue(r.stderr.startswith("actas-stop: code=needs_user reason=human_only profile=-\n"))
         d = json.loads(self.cli_env("status", "std", "--json", env={"FAKE_PS_FAIL": "1"}).stdout)
         self.assertFalse(d["agent"]["detected"])
 
     def test_run_records_the_agent_pid(self):
         r = self.cli_env("run", "std", "--no-check", env={"CLAUDECODE": None})
         self.assertEqual(r.returncode, 0, r.stderr)
-        pid = json.loads(self.out.read_text())["env"]["CCENV_SESSION"]
+        pid = json.loads(self.out.read_text())["env"]["ACTAS_SESSION"]
         rec = json.loads((self.sessions / f"{pid}.json").read_text())
         self.assertEqual((rec["pid"], rec["profile"]), (int(pid), "std"))
         self.assertTrue(rec["start"])
@@ -481,13 +481,13 @@ class Presets(Base):
         std = self.settings("std")["permissions"]
         self.assertIn("Bash(git push)", std["ask"])
         self.assertIn("Bash(terraform apply*)", std["ask"])
-        self.assertIn("Bash(ccenv exec *)", std["ask"])
+        self.assertIn("Bash(actas exec *)", std["ask"])
         self.assertIn("Bash(git credential *)", std["deny"])
         self.assertIn("Bash(aws * delete-*)", std["ask"])
         ro = self.settings("ro")["permissions"]
         self.assertIn("Bash(git push)", ro["deny"])
         self.assertIn("Bash(kubectl apply *)", ro["deny"])
-        self.assertIn("Bash(ccenv run*)", ro["ask"])
+        self.assertIn("Bash(actas run*)", ro["ask"])
         pw = self.settings("pwf")["permissions"]
         self.assertNotIn("Bash(git push)", pw["deny"] + pw["ask"])
         self.assertIn("Bash(terraform destroy*)", pw["ask"])
@@ -495,8 +495,8 @@ class Presets(Base):
 
     def test_deny_paths_follow_overrides_and_referenced_modules(self):  # SPEC test 59
         deny = self.settings("std")["permissions"]["deny"]
-        self.assertIn(f"Edit(/{self.root}/**)", deny)                 # CCENV_ROOT, as //abs
-        self.assertIn(f"Edit(/{self.tmp}/state/**)", deny)            # CCENV_STATE
+        self.assertIn(f"Edit(/{self.root}/**)", deny)                 # ACTAS_ROOT, as //abs
+        self.assertIn(f"Edit(/{self.tmp}/state/**)", deny)            # ACTAS_STATE
         self.assertIn("Read(~/.config/sops/age/keys.txt)", deny)      # HOME-relative form
         self.assertIn("Read(~/.aws/sso/cache)", deny)
         self.assertIn("Read(~/.aws/sso/cache/**)", deny)                # the directory's files too
@@ -585,8 +585,8 @@ class Probes(Base):
                      env={"FAKE_AWS_RC": "255", "FAKE_AWS_ERR": "Error: Token has expired and refresh failed",
                           "FAKE_AZ_SUB": "other"})
         self.assertEqual(r.returncode, 4, r.stderr)
-        self.assertEqual(r.stderr.splitlines()[0], "ccenv-stop: code=expired reason=login profile=all")
-        self.assertIn("run: ccenv login all", r.stderr)
+        self.assertEqual(r.stderr.splitlines()[0], "actas-stop: code=expired reason=login profile=all")
+        self.assertIn("run: actas login all", r.stderr)
         self.assertIn("az is on subscription other", r.stderr)
         self.assertEqual(json.loads(r.stdout)["identities"]["aws"]["probe"], {"status": "expired"})
 
@@ -596,7 +596,7 @@ class AwsHandoff(Base):
         env = {"FAKE_AWS_RC": "255", "FAKE_AWS_ERR": "Token has expired"}
         r = self.cli("aws-handoff", "std", "--stdout", env=env)
         self.assertEqual(r.returncode, 4)
-        self.assertEqual(r.stderr.splitlines()[0], "ccenv-stop: code=expired reason=login profile=std")
+        self.assertEqual(r.stderr.splitlines()[0], "actas-stop: code=expired reason=login profile=std")
         argvs = [c["argv"][:2] for c in self.calls("aws")]
         self.assertNotIn(["sso", "login"], argvs)
         self.assertNotIn(["configure", "export-credentials"], argvs)
@@ -626,7 +626,7 @@ class Login(Base):
         r = self.cli("login", "std", env={"FAKE_AWS_RC": "255", "FAKE_AWS_ERR": "Token has expired"})
         self.assertEqual(r.returncode, 4, r.stderr)
         # login is interactive (human-only): its progress lines come first
-        self.assertIn("\nccenv-stop: code=expired reason=login profile=std\n", r.stderr)
+        self.assertIn("\nactas-stop: code=expired reason=login profile=std\n", r.stderr)
         self.assertIn(["sso", "login"], [c["argv"][:2] for c in self.calls("aws")])
         self.assertEqual([x["action"] for x in self.audit_lines()][:1], ["login"])
 

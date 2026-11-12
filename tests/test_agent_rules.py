@@ -1,15 +1,15 @@
-"""AGENT_RULES has one source (SPEC 14.1, test 63): the constant in bin/ccenv.
-`ccenv instructions`, AGENTS.md and skills/ccenv/SKILL.md reproduce it
+"""AGENT_RULES has one source (SPEC 14.1, test 63): the constant in bin/actas.
+`actas instructions`, AGENTS.md and skills/actas/SKILL.md reproduce it
 verbatim, and the shipped agent texts never promise an in-session approval
 path. The skills' allowed-tools stay narrow."""
 
 import re
 import unittest
 
-from ccenv_testlib import REPO, Sandbox
+from actas_testlib import REPO, Sandbox
 
-AGENT_TEXTS = ("AGENTS.md", "skills/ccenv/SKILL.md", "skills/aws-handoff/SKILL.md", "docs/agents.md")
-BANNED = ("this will prompt", "After approval", "ccenv request")
+AGENT_TEXTS = ("AGENTS.md", "skills/actas/SKILL.md", "skills/aws-handoff/SKILL.md", "docs/agents.md")
+BANNED = ("this will prompt", "After approval", "actas request")
 
 
 def frontmatter(path):
@@ -31,12 +31,12 @@ class AgentRulesSingleSource(Sandbox):
 
     def test_agents_md_and_skill_contain_rules_verbatim(self):
         rules = self.m.AGENT_RULES
-        self.assertTrue(rules.startswith("## Credentials (ccenv)\n"))
-        for path in ("AGENTS.md", "skills/ccenv/SKILL.md"):
+        self.assertTrue(rules.startswith("## Credentials (actas)\n"))
+        for path in ("AGENTS.md", "skills/actas/SKILL.md"):
             text = (REPO / path).read_text()
             self.assertIn(rules + "\n", text, f"{path}: AGENT_RULES block is not verbatim; "
-                                              "paste the constant from bin/ccenv")
-            self.assertEqual(text.count("## Credentials (ccenv)"), 1, path)
+                                              "paste the constant from bin/actas")
+            self.assertEqual(text.count("## Credentials (actas)"), 1, path)
 
     def test_no_in_session_approval_path(self):
         for path in AGENT_TEXTS:
@@ -46,16 +46,16 @@ class AgentRulesSingleSource(Sandbox):
 
 
 class SkillFrontmatter(unittest.TestCase):
-    def test_ccenv_skill_pre_allows_only_read_only_commands(self):
-        fm = frontmatter("skills/ccenv/SKILL.md")
-        self.assertEqual(fm["name"], "ccenv")
+    def test_actas_skill_pre_allows_only_read_only_commands(self):
+        fm = frontmatter("skills/actas/SKILL.md")
+        self.assertEqual(fm["name"], "actas")
         self.assertNotIn("disable-model-invocation", fm)          # model-invocable
         tools = allowed_tools(fm)
         self.assertTrue(tools)
         for t in tools:
-            self.assertRegex(t, r"^Bash\(ccenv (status|list)( \*)?\)$")
+            self.assertRegex(t, r"^Bash\(actas (status|list)( \*)?\)$")
 
-    def test_aws_handoff_skill_is_user_invoked_and_never_runs_ccenv(self):
+    def test_aws_handoff_skill_is_user_invoked_and_never_runs_actas(self):
         fm = frontmatter("skills/aws-handoff/SKILL.md")
         self.assertEqual(fm["name"], "aws-handoff")
         self.assertEqual(fm["disable-model-invocation"], "true")
@@ -65,7 +65,7 @@ class SkillFrontmatter(unittest.TestCase):
             self.assertRegex(t, r"^Bash\(aws sts get-caller-identity( \*)?\)$")
         body = (REPO / "skills/aws-handoff/SKILL.md").read_text()
         self.assertIn("own terminal", body)
-        self.assertIn("ccenv login", body)
+        self.assertIn("actas login", body)
 
 
 if __name__ == "__main__":

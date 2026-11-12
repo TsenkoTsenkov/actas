@@ -10,7 +10,7 @@ import sys
 import time
 import unittest
 
-from ccenv_testlib import SYSTEM_PATH, Sandbox
+from actas_testlib import SYSTEM_PATH, Sandbox
 
 GW = {"provider": "gateway", "base_url": "https://llm.client-a.example", "token": "sops:gw/token"}
 M = {
@@ -159,9 +159,9 @@ class Precedence(Base):
     def test_agent_variables(self):  # SPEC test 26
         out, _ = self.launch("plain")
         self.assertEqual((out["env"]["AWS_PAGER"], out["env"]["GIT_TERMINAL_PROMPT"]), ("", "0"))
-        self.assertEqual(out["env"]["CCENV_AGENT"], "claude")
+        self.assertEqual(out["env"]["ACTAS_AGENT"], "claude")
         human = self.exec_env("plain")
-        for k in ("AWS_PAGER", "GIT_TERMINAL_PROMPT", "CCENV_AGENT"):
+        for k in ("AWS_PAGER", "GIT_TERMINAL_PROMPT", "ACTAS_AGENT"):
             self.assertNotIn(k, human)
         # M4: an agent exec is gated (test_m4); here only the variables matter.
         agent = self.m.assemble(self.m.resolve("plain"), want_secrets=False, ctx={"agent": True})["env"]
@@ -178,7 +178,7 @@ class Providers(Base):
         self.assertEqual(s["apiKeyHelper"], "")
         self.assertNotIn("ANTHROPIC_BASE_URL", out["env"])
         self.assertEqual(s["env"]["AWS_DEFAULT_REGION"], "eu-west-1")
-        self.assertEqual((s["env"]["CCENV"], s["env"]["CCENV_LEVEL"]), ("plain", "standard"))
+        self.assertEqual((s["env"]["ACTAS"], s["env"]["ACTAS_LEVEL"]), ("plain", "standard"))
 
     def test_gateway_v2_keeps_the_token_out_of_env(self):  # SPEC test 29
         out, _ = self.launch("gwp")
@@ -230,7 +230,7 @@ class Providers(Base):
         self.assertNotIn("first launch", self.launch("home")[1])
 
     def test_settings_files_are_content_named_and_pruned(self):  # SPEC test 33
-        cache = self.tmp / "cache" / "ccenv"
+        cache = self.tmp / "cache" / "actas"
         cache.mkdir(parents=True)
         old = cache / "gone.0123456789ab.settings.json"
         old.write_text("{}")
@@ -252,7 +252,7 @@ class OtherTools(Base):  # SPEC test 34
         self.assertEqual(out["env"]["CODEX_HOME"], self.homes("codex", "partner"))
         self.assertEqual(os.stat(self.homes("codex", "partner")).st_mode & 0o777, 0o700)
         self.assertEqual(out["argv"], ["--search", "resume"])
-        self.assertEqual(out["env"]["CCENV_AGENT"], "codex")
+        self.assertEqual(out["env"]["ACTAS_AGENT"], "codex")
         self.assertNotIn("sk-codex-SECRET", json.dumps(out))
 
     def test_codex_login_pipes_the_key(self):
@@ -296,7 +296,7 @@ class Shell(Base):
         out = self.sh("pat", env={"AWS_PROFILE": "leak", "GH_TOKEN": "leak"})
         lines = out.splitlines()
         self.assertEqual(lines[-1], "unset AWS_PROFILE")
-        self.assertEqual(lines[-2], "export CCENV=pat")
+        self.assertEqual(lines[-2], "export ACTAS=pat")
         self.assertIn("export GH_TOKEN=ghp_pat_SECRET", lines)
         self.assertEqual(self.sh("pat", "--format", "direnv", env={"AWS_PROFILE": "leak"}),
                          self.sh("pat", env={"AWS_PROFILE": "leak"}))
@@ -310,10 +310,10 @@ class Shell(Base):
         self.assertTrue(d["ok"])
         self.assertNotIn("GH_TOKEN", d["set"])
         self.assertNotIn("ghp_pat_SECRET", json.dumps(d))
-        env = self.sh("plain", "--format", "env", env={"GIT_CONFIG_COUNT": "3", "CCENV_GIT_BASE": "1"})
+        env = self.sh("plain", "--format", "env", env={"GIT_CONFIG_COUNT": "3", "ACTAS_GIT_BASE": "1"})
         kv = dict(line.split("=", 1) for line in env.splitlines())
         self.assertEqual((kv["GIT_CONFIG_KEY_0"], kv["GIT_CONFIG_COUNT"]), ("user.name", "2"))
-        self.assertEqual(kv["CCENV_GIT_BASE"], "0")                  # F0: a nested ccenv drops them
+        self.assertEqual(kv["ACTAS_GIT_BASE"], "0")                  # F0: a nested actas drops them
         self.assertEqual(self.calls("sops"), [])
 
     def test_fish_quoting_round_trips(self):  # SPEC test 27
@@ -404,16 +404,16 @@ class Cli(Base):
         self.assertNotIn("Traceback", r.stderr)
         self.assertEqual(self.cli("exec", "plain").returncode, 2)
         (self.tmp / "w" / "plain").mkdir(parents=True)
-        r = self.cli("--cwd", str(self.tmp / "w/plain"), "exec", "--", "sh", "-c", "echo $CCENV")
+        r = self.cli("--cwd", str(self.tmp / "w/plain"), "exec", "--", "sh", "-c", "echo $ACTAS")
         self.assertEqual(r.stdout, "plain\n")
 
     def test_sync_git_pairs_start_at_zero(self):  # SPEC test 23 (sync side)
         (self.tmp / "w" / "plain").mkdir(parents=True)
-        r = self.cli("sync", "plain", env={"GIT_CONFIG_COUNT": "3", "CCENV_GIT_BASE": "1"})
+        r = self.cli("sync", "plain", env={"GIT_CONFIG_COUNT": "3", "ACTAS_GIT_BASE": "1"})
         self.assertEqual(r.returncode, 0, r.stderr)
         env = json.loads((self.tmp / "w/plain/.claude/settings.local.json").read_text())["env"]
         self.assertEqual((env["GIT_CONFIG_COUNT"], env["GIT_CONFIG_KEY_0"]), ("2", "user.name"))
-        self.assertEqual(env["CCENV_GIT_BASE"], "0")                 # F0: a nested ccenv drops them
+        self.assertEqual(env["ACTAS_GIT_BASE"], "0")                 # F0: a nested actas drops them
         self.assertEqual(env["AWS_PAGER"], "")                       # sync is an agent session
 
     def test_double_dash_only_for_run_and_exec(self):  # D28
@@ -430,7 +430,7 @@ class Cli(Base):
         self.assertEqual([c["argv"] for c in self.calls("gcloud")],
                          [["auth", "login"], ["auth", "application-default", "login"]])
         r = self.cli("login", "pat", "--module", "github")
-        self.assertIn("ccenv secret set sops:pat/gh", r.stderr)
+        self.assertIn("actas secret set sops:pat/gh", r.stderr)
         self.assertEqual(self.cli("login", "pat").returncode, 1)          # nothing to log in to
 
 

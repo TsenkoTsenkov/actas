@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the ccenv demo GIF/MP4 from a scripted storyboard (dummy data only).
+"""Render the actas demo GIF/MP4 from a scripted storyboard (dummy data only).
 
 Usage: python3 render_demo.py [outdir]
 """
@@ -196,7 +196,7 @@ def title_card(title, sub, sub2=None, ms=2600):
 
 def scene_manifest():
     s = Scene("1|One manifest: [c]profiles[/cap] for each context, built from reusable [c]roles[/cap]")
-    t = Term(40, 24, W - 80, H - 110, "~/.config/ccenv/environments.yaml")
+    t = Term(40, 24, W - 80, H - 110, "~/.config/actas/environments.yaml")
     s.widgets.append(t)
     y = [
         "[dim]version:[/] [o]2[/]",
@@ -207,7 +207,7 @@ def scene_manifest():
         "  [y]gh-ro[/]:     { [b]level[/]: readonly, [b]github[/]: { [b]auth[/]: [g]\"sops:personal/gh_ro_pat\"[/] } }",
         "  [y]corp-gateway[/]:",
         "    [b]claude[/]: { [b]provider[/]: gateway, [b]base_url[/]: https://llm.corp.example,",
-        "              [b]token[/]: [g]\"keychain:ccenv/corp-gateway\"[/] }   [dim]# a ref, never the value[/]",
+        "              [b]token[/]: [g]\"keychain:actas/corp-gateway\"[/] }   [dim]# a ref, never the value[/]",
         "",
         "[b]profiles:[/]",
         "  [c]personal[/]:                                  [dim]# read-only everywhere[/]",
@@ -243,7 +243,7 @@ def scene_parallel():
     b = Term(60 + half, 24, half, H - 110, "zsh — ~/code/client-a", cwd="~/code/client-a")
     s.widgets += [a, b]
     s.snap(400)
-    type_cmd(s, a, "ccenv status")
+    type_cmd(s, a, "actas status")
     out(s, a, [
         "profile   [bold]personal[/]  [dim]([/][g]readonly[/][dim]; by pattern)[/]",
         "cwd       ~/code/personal -> personal",
@@ -253,7 +253,7 @@ def scene_parallel():
         "git       Ada Example <ada@example.com>",
         "",
     ])
-    type_cmd(s, b, "ccenv status")
+    type_cmd(s, b, "actas status")
     out(s, b, [
         "profile   [bold]client-a[/]  [dim]([/][y]standard[/][dim]; by pattern)[/]",
         "cwd       ~/code/client-a -> client-a",
@@ -263,10 +263,10 @@ def scene_parallel():
         "git       Ada Example <ada@client-a.example>",
         "",
     ])
-    type_cmd(s, a, "ccenv run", cps=20)
-    out(s, a, ["[dim]ccenv:[/] [c]personal[/] · readonly · subscription", "       aws:personal-readonly · gh:pat"], hold=300)
-    type_cmd(s, b, "ccenv run", cps=20)
-    out(s, b, ["[dim]ccenv:[/] [c]client-a[/] · standard · gateway", "       aws:client-a-dev · gh:ada-client-a"], hold=900)
+    type_cmd(s, a, "actas run", cps=20)
+    out(s, a, ["[dim]actas:[/] [c]personal[/] · readonly · subscription", "       aws:personal-readonly · gh:pat"], hold=300)
+    type_cmd(s, b, "actas run", cps=20)
+    out(s, b, ["[dim]actas:[/] [c]client-a[/] · standard · gateway", "       aws:client-a-dev · gh:ada-client-a"], hold=900)
     a.lines.append("[dim]  … claude starts with these credentials[/]")
     b.lines.append("[dim]  … claude starts with these credentials[/]")
     s.snap(2600)
@@ -277,13 +277,13 @@ def scene_any_tool():
     t = Term(40, 24, W - 80, H - 110, "zsh — ~/code/client-b", cwd="~/code/client-b")
     s.widgets.append(t)
     s.snap(300)
-    type_cmd(s, t, "ccenv run                                  [dim]# this profile's tool is codex[/]")
-    out(s, t, ["[dim]ccenv:[/] [c]client-b[/] · standard · codex", ""], hold=900)
-    type_cmd(s, t, "ccenv exec client-a -- aws sts get-caller-identity --query Arn")
+    type_cmd(s, t, "actas run                                  [dim]# this profile's tool is codex[/]")
+    out(s, t, ["[dim]actas:[/] [c]client-b[/] · standard · codex", ""], hold=900)
+    type_cmd(s, t, "actas exec client-a -- aws sts get-caller-identity --query Arn")
     out(s, t, ["[g]\"arn:aws:sts::111122223333:assumed-role/AWSReservedSSO_Developer/ada\"[/]", ""], hold=700)
-    type_cmd(s, t, "ccenv exec client-a -- gh api user --jq .login")
+    type_cmd(s, t, "actas exec client-a -- gh api user --jq .login")
     out(s, t, ["ada-client-a", ""], hold=700)
-    type_cmd(s, t, "eval \"$(ccenv shell --no-secrets)\"            [dim]# or direnv: use ccenv[/]")
+    type_cmd(s, t, "eval \"$(actas shell --no-secrets)\"            [dim]# or direnv: use actas[/]")
     s.snap(2400)
 
 
@@ -292,7 +292,7 @@ def scene_explain():
     t = Term(40, 24, W - 80, H - 110, "zsh — ~/code/personal", cwd="~/code/personal")
     s.widgets.append(t)
     s.snap(300)
-    type_cmd(s, t, "ccenv status personal-power --why")
+    type_cmd(s, t, "actas status personal-power --why")
     out(s, t, [
         "profile   [bold]personal-power[/]  [dim]([/][r]power[/][dim], [/][o]confirm[/][dim]; by name)[/]",
         "cwd       ~/code/personal -> personal",
@@ -306,9 +306,9 @@ def scene_explain():
         "          aws.region = eu-west-1 [dim](from aws-ro)[/]",
         "          git.email = ada@example.com [dim](from defaults)[/]",
         "          github.auth = sops:personal/gh_ro_pat [dim](from gh-ro)[/]",
-        "env.set   AWS_PROFILE, AWS_REGION, CCENV, CCENV_LEVEL, GH_CONFIG_DIR, GIT_CONFIG_* …",
+        "env.set   AWS_PROFILE, AWS_REGION, ACTAS, ACTAS_LEVEL, GH_CONFIG_DIR, GIT_CONFIG_* …",
         "env.secret GH_TOKEN, GITHUB_TOKEN   [dim]# names only, values come from sops at launch[/]",
-        "rules     27 deny, 23 ask   [dim]# rendered into Claude Code permissions[/]",
+        "rules     31 deny, 27 ask   [dim]# rendered into Claude Code permissions[/]",
     ], per=110, hold=4200)
 
 
@@ -350,7 +350,7 @@ class Desktop:
         # header
         d.text((x + 256, y + 14), "personal-site", font=UI_B, fill=C["d_text"])
         d.text((x + 256 + UI_B.getlength("personal-site") + 12, y + 17),
-               "~/code/personal/site · desktop app (no ccenv run)", font=UI_S, fill=C["d_dim"])
+               "~/code/personal/site · desktop app (no actas run)", font=UI_S, fill=C["d_dim"])
         d.line([x + 230, y + 46, x + w, y + 46], fill=C["d_border"])
         # input
         d.rounded_rectangle([x + 256, y + h - 66, x + w - 24, y + h - 18], 14, fill=C["d_user"],
@@ -433,7 +433,7 @@ def scene_desktop():
     desk.items.append({"kind": "user", "text": "The plan looks good. Go ahead and apply the terraform change to the staging bucket."})
     s.snap(1300)
     stream(s, desk, "I'll check which credentials this session has first.")
-    tool = {"kind": "tool", "cmd": "ccenv status --json", "out": [], "status": ""}
+    tool = {"kind": "tool", "cmd": "actas status --json", "out": [], "status": ""}
     desk.items.append(tool)
     s.snap(500)
     for ln in ['{"ok": true, "session": {"profile": "personal", "source": "env"}, "profile": "personal",',
@@ -443,21 +443,21 @@ def scene_desktop():
     tool["status"] = "exit 0"
     s.snap(900)
     stream(s, desk, "This session is read-only. Applying needs the personal-power profile, so I'll request it.")
-    tool2 = {"kind": "tool", "cmd": "ccenv exec personal-power --reason \"apply reviewed plan\" -- terraform apply", "out": [], "status": ""}
+    tool2 = {"kind": "tool", "cmd": "actas exec personal-power --reason \"apply reviewed plan\" -- terraform apply", "out": [], "status": ""}
     desk.items.append(tool2)
     s.snap(700)
-    for ln in ["[r]ccenv-stop: code=needs_user reason=confirm profile=personal-power[/]",
-               "ccenv: refused: personal-power requires a typed confirmation, which only",
+    for ln in ["[r]actas-stop: code=needs_user reason=confirm profile=personal-power[/]",
+               "actas: refused: personal-power requires a typed confirmation, which only",
                "a human in a terminal can give. … The agent wants to run `terraform apply`",
-               "as ccenv profile personal-power (power; aws:personal-poweruser, gh:pat).",
+               "as actas profile personal-power (power; aws:personal-poweruser, gh:pat).",
                "Agent's reason: \"apply reviewed plan\" … run it yourself in a separate",
-               "terminal:  [d_text]ccenv exec personal-power -- terraform apply[/]"]:
+               "terminal:  [d_text]actas exec personal-power -- terraform apply[/]"]:
         tool2["out"].append(ln)
         s.snap(300)
     tool2["status"] = "exit 3 · needs you"
     s.snap(1100)
-    stream(s, desk, "ccenv stopped me: personal-power needs your approval, and I can't grant that myself. "
-                    "If you agree, run this in your own terminal:\n[d_accent]ccenv exec personal-power -- terraform apply[/]\n"
+    stream(s, desk, "actas stopped me: personal-power needs your approval, and I can't grant that myself. "
+                    "If you agree, run this in your own terminal:\n[d_accent]actas exec personal-power -- terraform apply[/]\n"
                     "I'll wait. I won't retry or try other credentials.")
     s.snap(4200)
 
@@ -467,7 +467,7 @@ def scene_human():
     t = Term(40, 24, W - 80, H - 110, "zsh — ~/code/personal/site", cwd="~/code/personal/site")
     s.widgets.append(t)
     s.snap(300)
-    type_cmd(s, t, "ccenv exec personal-power -- terraform apply")
+    type_cmd(s, t, "actas exec personal-power -- terraform apply")
     out(s, t, ["[y]Elevate this shell -> personal-power (power) to run: terraform apply.[/]"], hold=200)
     t.lines.append("Type the profile name to continue: ")
     s.cursor_on = t
@@ -486,7 +486,7 @@ def scene_human():
         "[g]Apply complete! Resources: 0 added, 1 changed, 0 destroyed.[/]",
         "",
     ], per=160, hold=500)
-    type_cmd(s, t, "tail -n 2 ~/.local/state/ccenv/audit.jsonl | jq -c '{profile,decision,agent:.agent.detected}'")
+    type_cmd(s, t, "tail -n 2 ~/.local/state/actas/audit.jsonl | jq -c '{profile,decision,agent:.agent.detected}'")
     out(s, t, [
         '{"profile":"personal-power","decision":"refused-needs-user","agent":true}',
         '{"profile":"personal-power","decision":"confirmed-tty","agent":false}',
@@ -494,12 +494,12 @@ def scene_human():
 
 
 def end_card():
-    title_card("ccenv", "subscriptions · gateways · cloud · GitHub · agents, per project",
-               "credentials are the boundary; ccenv is the seatbelt", ms=3800)
+    title_card("actas", "subscriptions · gateways · cloud · GitHub · agents, per project",
+               "credentials are the boundary; actas is the seatbelt", ms=3800)
 
 
 # ---------------------------------------------------------------- main
-title_card("ccenv", "one manifest for every identity you work as",
+title_card("actas", "one manifest for every identity you work as",
            "Claude Code · Codex · Gemini · aws · gcloud · az · gh · git", ms=2800)
 scene_manifest()
 scene_parallel()
@@ -512,7 +512,7 @@ end_card()
 print(f"{len(FRAMES)} frames, {sum(ms for _, ms in FRAMES) / 1000:.1f}s")
 
 # ---- GIF (Pillow, variable frame durations, one global palette from samples)
-gif = OUT / "ccenv-demo.gif"
+gif = OUT / "actas-demo.gif"
 sample = Image.new("RGB", (W, H * 4))
 for i, idx in enumerate([len(FRAMES) // 8, len(FRAMES) // 3, len(FRAMES) * 2 // 3, len(FRAMES) - 30]):
     sample.paste(FRAMES[idx][0], (0, H * i))
@@ -534,7 +534,7 @@ for i, (img, ms) in enumerate(FRAMES):
     lst.append(f"file '{p}'\nduration {ms / 1000:.3f}")
 lst.append(f"file '{fdir / f'{len(FRAMES) - 1:05d}.png'}'")
 (OUT / "frames.txt").write_text("\n".join(lst) + "\n")
-mp4 = OUT / "ccenv-demo.mp4"
+mp4 = OUT / "actas-demo.mp4"
 r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(OUT / "frames.txt"),
                     "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-crf", "20", "-movflags", "+faststart", str(mp4)])
 if r.returncode == 0:

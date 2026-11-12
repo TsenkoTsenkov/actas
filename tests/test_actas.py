@@ -1,6 +1,6 @@
-"""Tests for ccenv. Standard library only: python3 -m unittest discover tests
+"""Tests for actas. Standard library only: python3 -m unittest discover tests
 
-Every test points CCENV_ROOT and XDG_CACHE_HOME at a temporary directory,
+Every test points ACTAS_ROOT and XDG_CACHE_HOME at a temporary directory,
 so nothing here reads or writes your real configuration.
 """
 
@@ -12,12 +12,12 @@ import sys
 import unittest
 from pathlib import Path
 
-from ccenv_testlib import SYSTEM_PATH, Sandbox
+from actas_testlib import SYSTEM_PATH, Sandbox
 
 # The secrets round-trip needs the real sops and age (with a throwaway key in
 # a temp dir). It is opt-in so no default test run ever invokes real sops:
-# CCENV_TEST_REAL_SOPS=1 python3 -m unittest discover -s tests (CI sets it).
-REAL_SOPS = shutil.which("sops") if os.environ.get("CCENV_TEST_REAL_SOPS") else None
+# ACTAS_TEST_REAL_SOPS=1 python3 -m unittest discover -s tests (CI sets it).
+REAL_SOPS = shutil.which("sops") if os.environ.get("ACTAS_TEST_REAL_SOPS") else None
 REAL_AGE_KEYGEN = shutil.which("age-keygen") if REAL_SOPS else None
 
 MANIFEST = """{
@@ -44,8 +44,8 @@ MANIFEST = """{
 
 
 class Base(Sandbox):
-    """Isolated per test: HOME, CCENV_ROOT, CCENV_STATE, XDG dirs and a PATH
-    of fake binaries (see ccenv_testlib)."""
+    """Isolated per test: HOME, ACTAS_ROOT, ACTAS_STATE, XDG dirs and a PATH
+    of fake binaries (see actas_testlib)."""
 
     def setUp(self):
         super().setUp()
@@ -86,7 +86,7 @@ class Settings(Base):
         self.assertNotIn("ANTHROPIC_BASE_URL", env)
         self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
         self.assertEqual(env["AWS_PROFILE"], "work-sso")
-        self.assertEqual(env["CCENV"], "work")
+        self.assertEqual(env["ACTAS"], "work")
         self.assertEqual(self.m.settings_for(self.m.resolve("work"))["env"]["ANTHROPIC_BASE_URL"], "")
 
     def test_git_identity_is_per_process(self):
@@ -105,7 +105,7 @@ class Settings(Base):
         self.assertEqual(self.m.shell_quote("a'b; rm -rf /"), "'a'\"'\"'b; rm -rf /'")
 
     def test_settings_file_is_private(self):
-        f = self.tmp / "cache" / "ccenv" / "x.json"
+        f = self.tmp / "cache" / "actas" / "x.json"
         self.m.write_private(f, "{}")
         self.assertEqual(f.stat().st_mode & 0o777, 0o600)
 
@@ -159,7 +159,7 @@ class Cli(Base):
     def test_cwd_after_command(self):
         r = self.cli("shell", "--cwd", str(self.tmp / "oss/lib"))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("export CCENV=oss", r.stdout)
+        self.assertIn("export ACTAS=oss", r.stdout)
 
     def test_list(self):
         r = self.cli("list")
@@ -175,13 +175,13 @@ class Cli(Base):
 
     def test_init_fresh(self):
         fresh = self.tmp / "fresh"
-        env = dict(os.environ, CCENV_ROOT=str(fresh), SOPS_AGE_KEY_FILE=str(self.tmp / "none"))
+        env = dict(os.environ, ACTAS_ROOT=str(fresh), SOPS_AGE_KEY_FILE=str(self.tmp / "none"))
         r = subprocess.run([sys.executable, str(self.bin), "init"], capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((fresh / "environments.yaml").exists())
 
 
-@unittest.skipUnless(REAL_SOPS and REAL_AGE_KEYGEN, "set CCENV_TEST_REAL_SOPS=1 (needs sops and age)")
+@unittest.skipUnless(REAL_SOPS and REAL_AGE_KEYGEN, "set ACTAS_TEST_REAL_SOPS=1 (needs sops and age)")
 class Secrets(Base):
     def setUp(self):
         super().setUp()

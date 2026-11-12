@@ -5,7 +5,7 @@ what the tool prints (SPEC 0.1, test 18). Everything runs in the Sandbox
 import re
 import unittest
 
-from ccenv_testlib import REPO, Sandbox, has_yaml
+from actas_testlib import REPO, Sandbox, has_yaml
 
 README = (REPO / "README.md").read_text()
 
@@ -38,7 +38,7 @@ class ReadmeManifests(Sandbox):
         p = m.resolve(cwd=str(self.home / "code/client-a/api"))
         self.assertEqual(p["name"], "client-a")
         self.assertEqual(p["claude"]["provider"], "gateway")
-        self.assertEqual(p["claude"]["token"], "keychain:ccenv/client-a")
+        self.assertEqual(p["claude"]["token"], "keychain:actas/client-a")
         self.assertEqual(m.resolve(cwd=str(self.home / "code/personal"))["aws"]["profile"], "personal")
 
     def test_roles_example_composes_as_described(self):
@@ -58,7 +58,7 @@ class ReadmeManifests(Sandbox):
         self.write_manifest(ROLES)
         r = self.cli("status", "personal-power", "--why")
         self.assertEqual(r.returncode, 0, r.stderr)
-        shown = text_block_after(README, "`ccenv status personal-power --why`")
+        shown = text_block_after(README, "`actas status personal-power --why`")
         for line in shown.strip().splitlines():
             self.assertIn(line, r.stdout)
 
@@ -67,7 +67,7 @@ class ReadmeManifests(Sandbox):
         r = self.cli("exec", "personal-power", "--reason", "apply the reviewed plan", "--",
                      "terraform", "apply", env={"CLAUDECODE": "1"})
         self.assertEqual(r.returncode, 3, r.stderr)
-        shown = re.search(r"```text\n(ccenv-stop: .*?)```", README, re.S).group(1).strip()
+        shown = re.search(r"```text\n(actas-stop: .*?)```", README, re.S).group(1).strip()
         self.assertEqual(r.stderr.strip(), shown)
         self.assertEqual(self.calls("terraform"), [])
 
@@ -78,7 +78,7 @@ class ReadmeManifests(Sandbox):
         r = self.cli("--cwd", str(work), "run", cwd=str(work),
                      env={"AWS_ACCESS_KEY_ID": "AKIAEXAMPLE", "ANTHROPIC_API_KEY": "sk-example"})
         self.assertEqual(r.returncode, 0, r.stderr)
-        intro = re.search(r"\$ ccenv run\n(.*?)\n\n", README, re.S).group(1)
+        intro = re.search(r"\$ actas run\n(.*?)\n\n", README, re.S).group(1)
         for line in intro.splitlines():
             self.assertIn(line, r.stderr)
 
@@ -90,9 +90,9 @@ class ReadmeCommands(Sandbox):
         public = {n for n in sub.choices if n not in self.m.HIDDEN | {"help", "whoami"}}
         everyday = README.split("**Everyday**", 1)[1].split("**Advanced**", 1)[0]
         advanced = README.split("**Advanced**", 1)[1].split("Exit codes:", 1)[0]
-        documented = set(re.findall(r"^\| `ccenv ([a-z-]+)", everyday + advanced, re.M))
+        documented = set(re.findall(r"^\| `actas ([a-z-]+)", everyday + advanced, re.M))
         self.assertEqual(documented, public)
-        self.assertEqual(set(re.findall(r"^\| `ccenv ([a-z-]+)", everyday, re.M)),
+        self.assertEqual(set(re.findall(r"^\| `actas ([a-z-]+)", everyday, re.M)),
                          {"init", "run", "exec", "status", "list", "login", "sync", "doctor"})
 
     def test_relative_links_exist(self):

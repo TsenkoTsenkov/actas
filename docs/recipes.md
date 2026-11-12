@@ -1,6 +1,6 @@
 # Recipes
 
-ccenv has built-in modules for AWS, Google Cloud, Azure, GitHub and git, and tool blocks for
+actas has built-in modules for AWS, Google Cloud, Azure, GitHub and git, and tool blocks for
 Claude Code, Codex and Gemini. Everything else is a **recipe**: a role that sets environment
 variables, reads secrets, removes variables or adds git credentials. Copy the role into your
 manifest's `roles:`, rename it, and `use:` it from a profile.
@@ -19,7 +19,7 @@ What a recipe can use (details in [manifest.md](manifest.md)):
 
 | Key | For |
 |---|---|
-| `env` | Plain values: hosts, account IDs, file paths. **Literal text: write absolute paths** (`~` and `$HOME` are not expanded). `ccenv sync` writes these into Claude's settings, so never put secrets here. |
+| `env` | Plain values: hosts, account IDs, file paths. **Literal text: write absolute paths** (`~` and `$HOME` are not expanded). `actas sync` writes these into Claude's settings, so never put secrets here. |
 | `secret_env` | Tokens and passwords, as [refs](manifest.md#secret-references) (`sops:`, `keychain:`, `op://`, `gh:`, `cmd:`). Process environment only. |
 | `unset` | Variables the session must not inherit from your shell. |
 | `git.credentials` | A git credential helper per URL that reads a ref when git asks. |
@@ -27,7 +27,7 @@ What a recipe can use (details in [manifest.md](manifest.md)):
 
 Two things to know:
 
-- ccenv clears the variables its modules own, plus every variable any profile or role names in
+- actas clears the variables its modules own, plus every variable any profile or role names in
   `secret_env` (so a role's `NPM_TOKEN` never leaks into another profile's session; keep it with
   `inherit: [NPM_TOKEN]`). Variables the manifest never names, such as a `GITLAB_TOKEN` exported
   in your shell profile, reach every session unless the profile sets them or lists them in
@@ -36,7 +36,7 @@ Two things to know:
   Prefer short-lived or narrowly scoped tokens, and see
   [Claude Code extras](#claude-code-extras) for `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`.
 
-The variable names below come from each tool's documentation. ccenv passes them through and does
+The variable names below come from each tool's documentation. actas passes them through and does
 not test the tools themselves; check your tool's docs if something does not take effect.
 
 Contents: [git hosts](#git-hosts) ·
@@ -73,7 +73,7 @@ roles:
   `write_repository`.
 - Prefer a separate glab login over a token? Point glab at its own config directory instead:
   `env: { GLAB_CONFIG_DIR: /home/ada/.config/glab-client-c }` (absolute path), then run
-  `ccenv exec <profile> -- glab auth login` once.
+  `actas exec <profile> -- glab auth login` once.
 - The built-in push rules already cover `glab mr merge` (deny in readonly, ask in standard, no
   rule in power; see [levels](manifest.md#levels)).
 
@@ -112,7 +112,7 @@ roles:
   gitea-client-f:
     git:
       credentials:
-        "https://git.client-f.example": { username: ada, token: "keychain:ccenv/client-f-gitea" }
+        "https://git.client-f.example": { username: ada, token: "keychain:actas/client-f-gitea" }
 ```
 
 For GitHub Enterprise Server, use the built-in module: `github: { auth: "gh:ada@github.client-f.example" }`.
@@ -330,7 +330,7 @@ roles:
     env: { CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1" }
 ```
 
-- `ccenv doctor` warns about `ANTHROPIC_CUSTOM_HEADERS` in `env` because the name contains
+- `actas doctor` warns about `ANTHROPIC_CUSTOM_HEADERS` in `env` because the name contains
   "HEADERS": that is expected for non-secret headers. If any header carries a secret, move the
   variable to `secret_env` with a ref holding the whole header text.
 - `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` strips credentials from the environment of Claude's Bash
@@ -355,8 +355,8 @@ roles:
 ```
 
 Leave `claude.provider` at its default (`subscription`); the `env` value of
-`CLAUDE_CODE_USE_FOUNDRY` replaces the blank ccenv writes for it. The key is in the process
-environment. `ccenv list`, `status` and the run badge show such a profile as `foundry`, with
+`CLAUDE_CODE_USE_FOUNDRY` replaces the blank actas writes for it. The key is in the process
+environment. `actas list`, `status` and the run badge show such a profile as `foundry`, with
 Remote Control off (a truthy `CLAUDE_CODE_USE_*` in `env` names the provider).
 
 ---
@@ -364,8 +364,8 @@ Remote Control off (a truthy `CLAUDE_CODE_USE_*` in `env` names the provider).
 ## Secret stores through `cmd:`
 
 A `cmd:` ref runs a command (no shell) and uses its output, minus one trailing newline. Write it as
-a YAML map, `{cmd: [program, arg, …]}`. The command runs with the environment ccenv was started
-from, not the profile's, so put addresses and project names in its arguments. `ccenv doctor`
+a YAML map, `{cmd: [program, arg, …]}`. The command runs with the environment actas was started
+from, not the profile's, so put addresses and project names in its arguments. `actas doctor`
 lists every `cmd:` ref.
 
 ```yaml
@@ -373,12 +373,12 @@ roles:
   secrets-examples:
     secret_env:
       # Linux Secret Service (GNOME Keyring, KeePassXC)
-      NPM_TOKEN: { cmd: ["secret-tool", "lookup", "service", "ccenv", "account", "client-a-npm"] }
+      NPM_TOKEN: { cmd: ["secret-tool", "lookup", "service", "actas", "account", "client-a-npm"] }
       # pass: the whole entry (one trailing newline stripped), so keep the token as its only line;
       # gopass: `gopass show -o` prints only the password
       SENTRY_AUTH_TOKEN: { cmd: ["pass", "show", "client-a/sentry"] }
       VAULT_TOKEN: { cmd: ["gopass", "show", "-o", "client-a/vault"] }
-      # Bitwarden: needs an unlocked session (BW_SESSION in the shell you start ccenv from); use item IDs
+      # Bitwarden: needs an unlocked session (BW_SESSION in the shell you start actas from); use item IDs
       FLY_API_TOKEN: { cmd: ["bw", "get", "password", "00000000-0000-0000-0000-000000000000"] }
       # HashiCorp Vault KV: pass the address explicitly
       PULUMI_ACCESS_TOKEN: { cmd: ["vault", "kv", "get", "-address=https://vault.client-a.example", "-mount=secret", "-field=token", "client-a/pulumi"] }
@@ -386,21 +386,21 @@ roles:
       VERCEL_TOKEN: { cmd: ["doppler", "secrets", "get", "VERCEL_TOKEN", "--plain", "-p", "client-a", "-c", "prd"] }
 ```
 
-To store values in these tools, use the tool itself; `ccenv secret set` writes only `sops:` and
-`keychain:` refs. On Linux, `secret-tool store --label=ccenv service ccenv account client-a-npm`
+To store values in these tools, use the tool itself; `actas secret set` writes only `sops:` and
+`keychain:` refs. On Linux, `secret-tool store --label=actas service actas account client-a-npm`
 reads the value from stdin.
 
 ---
 
 ## Other agents
 
-Any agent runs with a profile's identity through `ccenv exec`:
+Any agent runs with a profile's identity through `actas exec`:
 
 ```bash
-ccenv exec client-a -- aider
+actas exec client-a -- aider
 ```
 
-ccenv sets the cloud, GitHub and git identity; the variables below select each agent's own login,
+actas sets the cloud, GitHub and git identity; the variables below select each agent's own login,
 model provider or config. Put them in a role for that profile.
 
 | Agent | Command | Its own login / config | Key or gateway variables |
@@ -436,29 +436,29 @@ Notes:
 - **Aider** reads `ANTHROPIC_API_KEY`, which Claude Code also reads. Give Aider its own profile
   (it can `use:` the client's base role) so a Claude session in the same profile does not switch
   to that key. Aider also loads `.env` files from your home, the git root and the working
-  directory, which can override what ccenv sets.
-- **Agent detection.** `ccenv exec client-a -- aider` (or `copilot`, `amp`, `cursor-agent`,
-  `opencode`, `goose`, `kiro-cli`) sets `CCENV_AGENT` for the tool it starts, so the `ccenv`
+  directory, which can override what actas sets.
+- **Agent detection.** `actas exec client-a -- aider` (or `copilot`, `amp`, `cursor-agent`,
+  `opencode`, `goose`, `kiro-cli`) sets `ACTAS_AGENT` for the tool it starts, so the `actas`
   commands it runs are treated as agent commands. Started any other way, script-based CLIs (Aider
   runs as `python`, npm-installed ones as `node`) and Cursor's `agent` are not recognised, so mark
   the launch yourself, never in a profile's `env:`
   ([why](agents.md#cursor-copilot-cli-aider-opencode-goose-amp-kiro-and-others)):
 
   ```bash
-  ccenv exec client-a -- env CCENV_AGENT=cursor agent
-  alias aider='CCENV_AGENT=aider aider'        # when you start it without ccenv exec
+  actas exec client-a -- env ACTAS_AGENT=cursor agent
+  alias aider='ACTAS_AGENT=aider aider'        # when you start it without actas exec
   ```
-- `ccenv exec` does not write a session record (only `ccenv run` does). An agent started this way
-  is identified by `$CCENV`: it may use its own profile and those in `agents_may_use` at the same
+- `actas exec` does not write a session record (only `actas run` does). An agent started this way
+  is identified by `$ACTAS`: it may use its own profile and those in `agents_may_use` at the same
   or a lower level, and power profiles always need you. See [agents.md](agents.md).
 
 ---
 
 ## Codex through a gateway
 
-ccenv sets `CODEX_HOME` for a `codex:` block but does not write Codex's `config.toml` in this
+actas sets `CODEX_HOME` for a `codex:` block but does not write Codex's `config.toml` in this
 release. To send Codex through an LLM gateway without exporting the token, write the provider
-into the managed home by hand and let Codex call ccenv for the token.
+into the managed home by hand and let Codex call actas for the token.
 
 1. A profile with its own Codex home, using the gateway role:
 
@@ -474,11 +474,11 @@ into the managed home by hand and let Codex call ccenv for the token.
        codex: { home: client-c }
    ```
 
-2. Get the absolute helper command for that token. `ccenv desktop client-c-codex --print-3p`
+2. Get the absolute helper command for that token. `actas desktop client-c-codex --print-3p`
    prints it as `inferenceCredentialHelper` (the program) and `inferenceCredentialHelperArgs` (its
    arguments).
 
-3. Create `~/.local/state/ccenv/homes/codex/client-c/config.toml` (run `ccenv run client-c-codex`
+3. Create `~/.local/state/actas/homes/codex/client-c/config.toml` (run `actas run client-c-codex`
    once first, or create the directory with mode 0700):
 
    ```toml
@@ -491,7 +491,7 @@ into the managed home by hand and let Codex call ccenv for the token.
 
    [model_providers.corp.auth]
    command = "/usr/bin/python3"    # inferenceCredentialHelper from step 2
-   args = ["/home/ada/.local/bin/ccenv", "secret", "--ref", "sops:corp-gateway/token"]
+   args = ["/home/ada/.local/bin/actas", "secret", "--ref", "sops:corp-gateway/token"]
    ```
 
 Codex then runs the command when it needs a token; nothing secret is in its environment. The
@@ -527,13 +527,13 @@ profiles:
 Everyday sessions in `~/code/personal` are read-only. For one elevated command, run it yourself:
 
 ```bash
-ccenv exec personal-power -- terraform apply
+actas exec personal-power -- terraform apply
 # Elevate this shell -> personal-power (power) to run: terraform apply.
 # Type the profile name to continue: personal-power
 ```
 
 You type the profile name each time. Agents can never use `personal-power`: they get a
-`ccenv-stop:` refusal with the command for you to run in your own terminal.
+`actas-stop:` refusal with the command for you to run in your own terminal.
 
 For a real boundary, give the power role a separate SSO start URL or an MFA requirement, so the
 read-only login cannot mint it.
@@ -565,18 +565,18 @@ Claude Code rules: they steer an agent that follows them, they do not stop other
 
 ## Stronger isolation: devcontainer or VM
 
-Agent rules and ccenv's checks are a seatbelt. When an agent must not be able to reach other
+Agent rules and actas's checks are a seatbelt. When an agent must not be able to reach other
 clients' credentials at all, run it where those credentials do not exist:
 
-- Run the agent inside a devcontainer or VM per client. Do **not** mount `~/.config/ccenv`, the
+- Run the agent inside a devcontainer or VM per client. Do **not** mount `~/.config/actas`, the
   age key, `~/.aws`, `~/.config/gh`, `~/.azure`, `~/.config/gcloud` or `~/.claude` from the host.
-- Inside, install ccenv with a manifest that holds only that client's profiles, and credentials
+- Inside, install actas with a manifest that holds only that client's profiles, and credentials
   scoped to that client: a fine-grained GitHub token for its repositories, a read-only cloud role,
   an age key that exists only in the container.
 - For AWS, log in inside the container to a narrow permission set (`aws sso login --use-device-code`),
-  or paste short-lived credentials from `ccenv aws-handoff <profile> --stdout` (they expire; the
+  or paste short-lived credentials from `actas aws-handoff <profile> --stdout` (they expire; the
   default is one hour for static keys, the role's session lifetime for SSO profiles).
-- Run setup steps (`ccenv init`, `ccenv secret set`, `ccenv login`) in a terminal inside the
+- Run setup steps (`actas init`, `actas secret set`, `actas login`) in a terminal inside the
   container, not through the agent: they are human-only.
 
 This recipe is guidance, not yet verified with a specific devcontainer or VM setup.
@@ -585,24 +585,24 @@ This recipe is guidance, not yet verified with a specific devcontainer or VM set
 
 ## direnv, mise and AWS credential tools
 
-- **direnv:** `ccenv instructions --direnv` prints a `use_ccenv` function for
-  `~/.config/direnv/direnvrc` (also in `contrib/direnvrc`). Add `use ccenv` (or
-  `use ccenv <profile>`) to a project's `.envrc`. Only non-secret variables reach your shell.
+- **direnv:** `actas instructions --direnv` prints a `use_actas` function for
+  `~/.config/direnv/direnvrc` (also in `contrib/direnvrc`). Add `use actas` (or
+  `use actas <profile>`) to a project's `.envrc`. Only non-secret variables reach your shell.
   With `github.auth`, the token is not among them: `gh` in that shell uses its own keyring login
-  (ccenv does not point it at the empty fail-closed config there), while `git push` uses
-  ccenv's credential helper. Run `gh` through `ccenv exec` to act as the profile's account.
+  (actas does not point it at the empty fail-closed config there), while `git push` uses
+  actas's credential helper. Run `gh` through `actas exec` to act as the profile's account.
 - **mise:** source the same output from `mise.toml`:
 
   ```toml
   [env]
-  _.source = "/home/ada/.config/mise/ccenv-env.sh"   # the script: eval "$(ccenv shell --no-secrets)"
+  _.source = "/home/ada/.config/mise/actas-env.sh"   # the script: eval "$(actas shell --no-secrets)"
   ```
 
   Not yet verified with a current mise release.
 
 - **aws-vault, granted:** for static IAM keys or auto-login, point `aws.profile` at an AWS profile
   whose `credential_process` is `aws-vault export --format=json <p>` or
-  `granted credential-process --profile <p>`. ccenv sets `AWS_PROFILE`; the AWS CLI does the rest.
-- **fnox** (secrets per project) can sit next to ccenv: ccenv picks the identity, fnox supplies
+  `granted credential-process --profile <p>`. actas sets `AWS_PROFILE`; the AWS CLI does the rest.
+- **fnox** (secrets per project) can sit next to actas: actas picks the identity, fnox supplies
   application secrets. A `cmd:` ref can call fnox's command that prints one secret (check
   fnox's docs for its exact form).

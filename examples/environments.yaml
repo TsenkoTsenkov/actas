@@ -1,6 +1,6 @@
-# Example ccenv manifest (version 2). Copy to ~/.config/ccenv/environments.yaml
+# Example actas manifest (version 2). Copy to ~/.config/actas/environments.yaml
 # and adapt. Every name below is a placeholder. Reference: docs/manifest.md.
-# Needs ccenv 2.0 (beta 2.0.0b1); `ccenv --version` shows yours.
+# Needs actas 2.0 (beta 2.0.0b1); `actas --version` shows yours.
 #
 # The four rules:
 #   1. Later layers win, maps merge.
@@ -101,8 +101,8 @@ profiles:
   partner:
     match: [~/code/partner-org]
     github: { auth: "sops:partner/gh_token" }               # a PAT; git gets a credential helper for it
-    tool: codex                                             # `ccenv run` launches Codex here
-    codex: { home: partner }                                # `ccenv login partner` signs Codex in once
+    tool: codex                                             # `actas run` launches Codex here
+    codex: { home: partner }                                # `actas login partner` signs Codex in once
 
   scratch:                                                  # the fallback: read-only, nothing attached
     level: readonly
