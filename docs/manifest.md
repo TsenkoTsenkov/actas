@@ -722,7 +722,8 @@ For a v1 file, actas keeps v1 behaviour where v2 would differ:
   (v1's behaviour) and suggests `aws: null`, which isolates it.
 
 A v1 file that uses v2 keys (`roles`, `use`, `level`, a `claude:` block, …) is an error that says
-to add `version: 2`. A v2 file with v1 keys (`provider`, `gateway`, `github.account`, …) is an
+to add `version: 2`. The one exception is `agents_may_use`, which a v1 file accepts in
+`defaults:` or in an environment. A v2 file with v1 keys (`provider`, `gateway`, `github.account`, …) is an
 error that points to `actas migrate`.
 
 **Converting:** `actas migrate` prints your manifest as v2. Every secret keeps its v1 sops path

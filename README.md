@@ -232,6 +232,20 @@ manifest uses, unless the profile sets them.
 **No cloud account at all.** `aws: null` in a profile makes the AWS CLI see an
 empty config.
 
+**Agents that work across all your accounts.** By default an agent stays in
+the profile its session started with: from a `personal` session it cannot
+push as your work GitHub account, and it hands you the command to run
+instead. To let agents use any of your everyday profiles, allow them all:
+
+```yaml
+defaults:
+  agents_may_use: ["*"]   # any profile at the same or a lower level
+```
+
+The agent then runs `actas exec work -- git push` itself. Profiles with
+`confirm: true` or a higher level still need you, and a profile can opt out
+with `agents_may_use: []`. This also works in a v1 manifest.
+
 **Read-only by default, power on demand.** See the next section.
 
 More setups (GitLab, Bitbucket, npm, uv/pip, cargo, Docker, Kubernetes,
@@ -406,7 +420,9 @@ Credentials follow the **session**, not the directory. An agent started by
   profile lists it in `agents_may_use` (`["*"]` for any) at the same or a lower level. `confirm`
   profiles always need a human.
 - Every refusal starts with an `actas-stop:` line and includes a ready-to-run
-  command. You run it yourself in a separate terminal. There is no in-session
+  command. You run it yourself in a separate terminal. A `not_allowed`
+  refusal also says which `agents_may_use` list to add the profile to, if you
+  want agents to do it themselves next time. There is no in-session
   approval and no bypass variable.
 - Logins, `sync`, `init`, `aws-handoff`, `migrate --write`, writing secrets
   and `shell` with secrets are human-only. Runs, execs, logins and refusals

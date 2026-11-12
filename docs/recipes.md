@@ -44,6 +44,7 @@ Contents: [git hosts](#git-hosts) ·
 [infrastructure and platforms](#infrastructure-and-platforms) · [databases](#databases) ·
 [Claude Code extras](#claude-code-extras) · [secret stores through `cmd:`](#secret-stores-through-cmd) ·
 [other agents](#other-agents) · [Codex through a gateway](#codex-through-a-gateway) ·
+[agents that push as any of your accounts](#agents-that-push-as-any-of-your-accounts) ·
 [read-only by default, power on demand](#read-only-by-default-power-on-demand) ·
 [extra deny rules](#extra-deny-rules) · [stronger isolation](#stronger-isolation-devcontainer-or-vm) ·
 [direnv, mise and AWS credential tools](#direnv-mise-and-aws-credential-tools)
@@ -502,6 +503,54 @@ Codex may drop variables whose names contain `KEY`, `SECRET` or `TOKEN` from the
 (its `shell_environment_policy`); sources disagree on the default, so this is not yet verified. If
 it does, `GH_TOKEN` does not reach those commands, `gh` reports "not logged in" (the `github`
 module fails closed), and git still works through its credential helper.
+
+---
+
+## Agents that push as any of your accounts
+
+"My agent was started in a personal project but has to push a branch as my work account."
+By default actas refuses that (`reason=not_allowed`) and gives you the command to run yourself.
+To let agents use every profile at the same or a lower level, set the list once for all
+profiles:
+
+```yaml
+defaults:
+  agents_may_use: ["*"]
+profiles:
+  personal:
+    match: ~/code/personal
+    github: { auth: "gh:ada-personal" }
+  work:
+    match: ~/code/work
+    github: { auth: "gh:ada-work" }
+  work-prod:
+    use: [work]
+    level: power
+    confirm: true            # still yours alone
+  client-a-readonly:
+    match: ~/code/client-a
+    level: readonly
+    agents_may_use: []       # agents in client-a sessions stay there
+```
+
+An agent in a `personal` session now runs the push itself, with the work identity for that one
+command:
+
+```bash
+actas exec work --reason "push the branch the user asked for" -- git push -u origin my-branch
+```
+
+What stays refused:
+
+- `confirm` profiles (`work-prod`) and anything at a higher level than the session's;
+- sessions of a profile with its own list (`client-a-readonly` above); a profile's own
+  `agents_may_use` replaces the defaults one;
+- agents with no actas session at all (start them with `actas run`).
+
+To allow only some hops, list names instead of `"*"`, in `defaults:` or on one profile
+(`agents_may_use: [work]`). A v1 manifest accepts the same key in `defaults:` or in an
+environment. `actas doctor` lists the profiles with `"*"`. Every `exec` is still written to
+the audit log.
 
 ---
 

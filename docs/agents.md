@@ -200,6 +200,9 @@ everyday profile. Make a separate profile with `confirm: true`, and use it
 only when you need it: `actas exec personal-power -- <cmd>`. The full recipe
 is [read-only by default, power on demand](recipes.md#read-only-by-default-power-on-demand).
 
+**"Let agents push as any of my accounts":** `defaults: { agents_may_use: ["*"] }`.
+See [agents that push as any of your accounts](recipes.md#agents-that-push-as-any-of-your-accounts).
+
 ---
 
 ## The gate
@@ -321,6 +324,16 @@ If you agree, run it yourself in a separate terminal (not inside the agent sessi
   actas exec client-a-admin -- terraform apply
 ```
 
+A `not_allowed` refusal (when allowing the hop would work) ends with one more
+line, addressed to you rather than the agent:
+
+```text
+For the user, not the agent: to let agents in personal sessions do this, add work (or "*" for every profile at the same or a lower level) to agents_may_use in defaults (applies to every profile without its own list), or give profiles.personal its own list (it then replaces the defaults one), in ~/.config/actas/environments.yaml.
+```
+
+It names the profile's own list when it has one, and in a nested `actas run`
+it says to start a new session after the change.
+
 How `ask_user` is built:
 
 - The command comes from argv and is shown with shell quoting, so a `;` or a
@@ -341,7 +354,7 @@ With `--json`, the refusal is also printed on stdout:
 | `confirm` | The target needs a typed confirmation, which only a human in a terminal can give |
 | `override` | The config or state directory differs from the session's; without an anchor, `ACTAS_ROOT`/`ACTAS_STATE` name a non-default place, or `ACTAS_SESSION` is set but its record is not found |
 | `no_session` | The agent has no actas session; only the readonly profile of its working directory runs |
-| `not_allowed` | The target is neither the session's profile nor in its `agents_may_use` |
+| `not_allowed` | The target is neither the session's profile nor in its `agents_may_use` (the text says where to add it; see [Agents that push as any of your accounts](recipes.md#agents-that-push-as-any-of-your-accounts)) |
 | `elevation` | The target's level is higher than the session's |
 | `unanchored` | A power target, and the session was not started by `actas run` |
 | `no_tty` | A human-context confirmation with no terminal to ask on |
