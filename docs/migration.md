@@ -189,6 +189,7 @@ actas migrate --write
 | `secret_env.VAR: key` | `secret_env.VAR: "sops:<env>/key"` |
 | `secret_env.GH_TOKEN: key` | `github.auth: "sops:<env>/key"` (and a matching `GITHUB_TOKEN` entry is dropped) |
 | `aws`, `env`, `match` | unchanged |
+| `agents_may_use` (in `defaults:` or an environment) | `agents_may_use` on each profile (the only v2 key a v1 file accepts) |
 
 Example: this v1 environment
 

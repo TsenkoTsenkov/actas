@@ -149,7 +149,10 @@ TOP_KEYS = ("version", "defaults", "profiles", "roles", "fallback")
 
 # Composition (SPEC 3.1)
 LOCAL_ONLY = {"match", "use", "description", "agents_may_use"}
-DEFAULTS_FORBIDDEN = LOCAL_ONLY | {"level", "confirm"}
+# agents_may_use is local to a profile, but `defaults:` may give the list every
+# profile without its own (a profile's own list, even [], replaces it).
+DEFAULTS_FORBIDDEN = (LOCAL_ONLY - {"agents_may_use"}) | {"level", "confirm"}
+ANY = "*"          # agents_may_use: every profile (still same level or lower, no confirm)
 UNION = {("permissions", "ask"), ("permissions", "deny"), ("inherit",), ("unset",)}
 STICKY = {("permissions", "ask"), ("permissions", "deny"), ("unset",)}
 MAX_DEPTH = 8
@@ -158,8 +161,8 @@ MAX_DEPTH = 8
 V1_TOP = ("version", "defaults", "environments")
 V1_KEYS = {"match": None, "provider": None, "gateway": ("base_url", "secret", "secret_from"),
            "aws": ("profile", "region"), "github": ("account", "name", "email"),
-           "env": None, "secret_env": None, "claude_args": None, "name": None}
-V2_ONLY = ("roles", "profiles", "use", "level", "confirm", "permissions", "agents_may_use",
+           "env": None, "secret_env": None, "claude_args": None, "name": None, "agents_may_use": None}
+V2_ONLY = ("roles", "profiles", "use", "level", "confirm", "permissions",
            "inherit", "unset", "fallback", "claude", "codex", "gemini", "gcp", "azure", "git")
 LEGACY_KEYS = {"provider": "use claude.provider", "claude_args": "use claude.args",
                "gateway": "use claude.base_url and claude.token"}
@@ -777,8 +780,9 @@ def check_value(v, spec, path, probs, v1=False, top=None):
             return bad("a list of strings")
         rx = {"names": NAME_RE, "vars": ENV_RE}.get(kind)
         for x in v:
-            if rx and not rx.match(x):
-                probs.error(path, f"invalid name {x!r}")
+            if rx and not rx.match(x) and not (top == "agents_may_use" and x == ANY):
+                probs.error(path, f"invalid name {x!r}" + (' (use "*" alone for every profile)'
+                                                           if top == "agents_may_use" and ANY in x else ""))
         return list(v)
     if kind in ("env", "refs", "strmap", "map"):
         if not isinstance(v, dict):
@@ -1023,6 +1027,8 @@ def v1_profile(L, body, probs):
         out["env"] = body["env"]
     if secret_env:
         out["secret_env"] = secret_env
+    if body.get("agents_may_use") is not None:   # agent reach only; no effect on the environment
+        out["agents_may_use"] = body["agents_may_use"]
     out["permissions"] = {"builtin": False}    # v1 rendered no agent rules
     return out
 
@@ -1130,7 +1136,10 @@ def merge_profile(name, cfg, check=True):
     out["level"] = LEVEL_NAMES[(max(inherited, LEVELS.get(declared, 0)) or LEVELS["standard"]) - 1]
     out["confirm"] = any(bool(nodes[n].get("confirm")) for n in chain)
     out["match"] = as_list(nodes[name].get("match"))
-    out["agents_may_use"] = list(nodes[name].get("agents_may_use") or [])
+    # An absent key takes the defaults' list; a present one, even null or [], replaces it.
+    own = nodes[name]["agents_may_use"] if "agents_may_use" in nodes[name] else cfg.defaults.get("agents_may_use")
+    out["agents_may_use"] = list(own or [])
+    out["_own_amu"] = "agents_may_use" in nodes[name]
     out["description"] = nodes[name].get("description")
     out["name"] = name
     out["_chain"] = ["defaults"] + chain
@@ -2268,14 +2277,16 @@ def gate(cfg, T, action, cmd, suggest, reason=None):
     S = profile_or_none(cfg, s_name)
 
     def refuse(r, human=False):
-        stop(r, ask_user(T, cmd, suggest, reason, human), T,
+        ask = ask_user(T, cmd, suggest, reason, human)
+        if r == "not_allowed" and L(T) <= L(S) and not (not R and T["level"] == "power"):
+            ask += "\n" + allow_hint(S, T, frozen=bool(R and isinstance(R.get("allowed"), list)))
+        stop(r, ask, T,
              current={"profile": S and S["name"], "level": S and S["level"], "source": source if S else None},
              requested={"profile": T["name"], "level": T["level"], "confirm": T["confirm"]},
              command=list(cmd), agent_reason=reason, action=action)
 
-    allowed = None
+    allowed, R = None, w["record"]
     if w["agent"]:
-        R = w["record"]
         if T["confirm"]:
             refuse("confirm")
         if R and (R.get("root") != str(ROOT) or R.get("state") != str(STATE)):
@@ -2301,7 +2312,7 @@ def gate(cfg, T, action, cmd, suggest, reason=None):
         else:
             allowed = R.get("allowed") if R and isinstance(R.get("allowed"), list) else (
                 [S["name"]] + list(S["agents_may_use"]))
-            if T["name"] not in allowed:
+            if T["name"] not in allowed and ANY not in allowed:
                 refuse("not_allowed")
             if L(T) > L(S):
                 refuse("elevation")
@@ -2323,6 +2334,26 @@ def gate(cfg, T, action, cmd, suggest, reason=None):
         decision = "allowed"
     release()
     return {"decision": decision, "from": S and S["name"], "allowed": allowed}
+
+
+def allow_hint(S, T, frozen=False):
+    """The not_allowed refusal also tells the user (not the agent) how to allow
+    such hops for good: where the session profile's list comes from."""
+    where = MANIFEST if MANIFEST.exists() else "the manifest"
+    sect = "environments" if S.get("_v1") else "profiles"
+    add = f'add {T["name"]} (or "*" for every profile at the same or a lower level) to agents_may_use'
+    if frozen:
+        return ("For the user, not the agent: this nested agent session keeps the agents_may_use list of "
+                f"the session that started it. To allow such hops, {add} in {where}, then start a new session.")
+    if S.get("_v1"):         # translated: own and default lists look the same
+        place = (f"of {sect}.{S['name']}, or in defaults (an environment's own agents_may_use "
+                 "replaces the defaults one)")
+    elif S.get("_own_amu"):
+        place = f"of {sect}.{S['name']} (its own list; defaults.agents_may_use does not apply to it)"
+    else:
+        place = (f"in defaults (applies to every profile without its own list), or give {sect}.{S['name']} "
+                 "its own list (it then replaces the defaults one)")
+    return f"For the user, not the agent: to let agents in {S['name']} sessions do this, {add} {place}, in {where}."
 
 
 def require_human(what, profile=None, argv=None):
@@ -3728,7 +3759,16 @@ def manifest_checks(cfg):
     for name, e in errors.items():
         out.error(f"profiles.{name}", str(e))
     referenced = {cfg.fallback} | {u for b in nodes.values() for u in as_list(b.get("use"))}
-    referenced |= {t for b in cfg.profiles.values() for t in b.get("agents_may_use") or []}
+    referenced |= {t for b in profs.values() for t in b["agents_may_use"]}
+    if ANY in referenced:
+        referenced |= set(profs)
+    for t in cfg.defaults.get("agents_may_use") or []:
+        if t != ANY and t not in profs:
+            out.warn("defaults.agents_may_use", f"unknown profile {t!r}" + did_you_mean(t, cfg.profiles))
+    wild = sorted(n for n, pr in profs.items() if ANY in pr["agents_may_use"] and not pr["confirm"])
+    if wild:
+        out.info("agents_may_use", f'"*" for {", ".join(wild)}: an agent in those sessions may '
+                                   "`actas exec` every profile at the same or a lower level without confirm")
     for name, prof in profs.items():
         p = f"profiles.{name}"
         level, perms = prof["level"], section(prof, "permissions")
@@ -3737,7 +3777,9 @@ def manifest_checks(cfg):
             n = len([r for i, act in PRESETS[level].items() if act != "allow" for r in INTENT_RULES[i]])
             out.info(p, f"built-in agent rules are off (permissions.builtin: false in {src}): looser than "
                         f"the {level} preset, whose {n} command rules and credential-file rules are not rendered")
-        for t in prof["agents_may_use"]:
+        for t in prof["agents_may_use"] if prof.get("_own_amu") or v1 else []:
+            if t == ANY:
+                continue
             if t not in profs:
                 out.warn(f"{p}.agents_may_use", f"unknown profile {t!r}" + did_you_mean(t, cfg.profiles))
             elif LEVELS[profs[t]["level"]] > LEVELS[level] or profs[t]["confirm"]:
@@ -4052,8 +4094,9 @@ claude codex gemini. Roles (roles:) are reusable pieces combined with use: [...]
 Check a manifest with `actas doctor`; see where a value comes from with `actas status --why`.""",
     "agents": f"""Agents (Claude Code, Codex, Gemini, ...) get the identity of the session they run in.
 `actas run` starts one; `actas instructions` prints the rules below for AGENTS.md.
-An agent may `actas exec` only its session profile or that profile's agents_may_use list,
-at the same or a lower level, never a confirm profile. Anything else stops with a
+An agent may `actas exec` only its session profile or that profile's agents_may_use list
+("*" for any; defaults: may set it for every profile), at the same or a lower level, never a
+confirm profile. Anything else stops with a
 `actas-stop:` line (exit 3) and text for the user to run in their own terminal.
 Credentials are the boundary; these rules are a seatbelt. More: {DOCS}agents.md
 """,

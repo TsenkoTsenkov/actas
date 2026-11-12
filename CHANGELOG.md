@@ -61,6 +61,13 @@ for what you can move or rename at your own pace.
 
 ### Added
 
+- **`agents_may_use: ["*"]` and in `defaults:`:** let agents `actas exec`
+  every profile at the same or a lower level (never a `confirm` profile),
+  for example to push as another GitHub account from any session. A
+  profile's own list replaces the default; `[]` opts it out. v1 manifests
+  accept the key too, in `defaults:` or an environment. The `not_allowed`
+  refusal now says where to add the profile, and `doctor` lists the
+  profiles with `"*"`.
 - **Manifest version 2** (`version: 2`): `profiles`, reusable `roles`,
   composition with `use:`, `defaults` and a `fallback` profile. Unknown keys
   warn with a "did you mean" suggestion, and type errors name the exact path.

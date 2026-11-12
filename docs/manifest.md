@@ -220,7 +220,8 @@ profile has it. `actas sync` skips `confirm` profiles unless you pass `--include
 An agent session started with `actas run` may run commands in other profiles with
 `actas exec <profile> -- <cmd>` only if:
 
-- the target is the session's own profile, or is listed in the session profile's `agents_may_use`;
+- the target is the session's own profile, or is listed in the session profile's `agents_may_use`
+  (`"*"` lists every profile);
 - the target's level is the same or lower than the session's;
 - the target has no `confirm`.
 
@@ -234,9 +235,21 @@ profiles:
     agents_may_use: [client-a-prod]   # client-a-prod is readonly: an agent here may read prod
 ```
 
-`agents_may_use` belongs to profiles only and is not inherited, and hops do not chain: a nested
-`actas run` an agent starts keeps the outer session's list. The full gate is in
-[agents.md](agents.md).
+`"*"` lets agents reach every profile, still only at the same or a lower level and never a
+`confirm` profile. To give every profile the same list, put it in `defaults:`; a profile's own
+`agents_may_use` replaces the default one (`agents_may_use: []` opts a profile out):
+
+```yaml
+defaults:
+  agents_may_use: ["*"]     # an agent may push as client-b from a client-a session
+profiles:
+  client-a-prod:
+    level: readonly
+    agents_may_use: []      # but not from here
+```
+
+`agents_may_use` is not inherited through `use:`, and hops do not chain: a nested `actas run` an
+agent starts keeps the outer session's list. The full gate is in [agents.md](agents.md).
 
 ### `null`, `"inherit"`, `inherit:` and `unset:`
 
@@ -291,7 +304,7 @@ Without `fallback`, running actas outside every `match` is an error that lists y
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `version` | `1` or `2` | `1` | `2` for this format. A file without `version` (or with `1`) is read as a [v1 manifest](#v1-manifests). |
-| `defaults` | profile body | `{}` | The first layer of every profile. It may not contain `match`, `use`, `description`, `agents_may_use`, `level` or `confirm` ("put it in a role and `use:` it"). |
+| `defaults` | profile body | `{}` | The first layer of every profile. It may not contain `match`, `use`, `description`, `level` or `confirm` ("put it in a role and `use:` it"). `agents_may_use` here is the list for every profile without its own. |
 | `profiles` | map name → profile body | `{}` | Runnable identities, matched to directories. |
 | `roles` | map name → profile body | `{}` | Reusable pieces, including permission sets. Never matched or run. `match` and `agents_may_use` are errors in a role. |
 | `fallback` | profile name | none | The profile used when no `match` fits. |
@@ -310,7 +323,7 @@ Names of profiles and roles: letters, digits, `.`, `_`, `-`, starting with a let
 | `description` | string | — | local | Shown by `list` and `status`. |
 | `match` | string or list | `[]` | local | Directory patterns ([matching](#directory-matching)). Profiles only. |
 | `use` | string or list | `[]` | local | Roles or profiles applied before this body, in order. |
-| `agents_may_use` | list of profile names | `[]` | local | Profiles an agent in this profile's session may `exec` ([above](#agents_may_use)). Profiles only. |
+| `agents_may_use` | list of profile names, or `["*"]` | `[]` | local | Profiles an agent in this profile's session may `exec` ([above](#agents_may_use)). Profiles and `defaults:` only. |
 | `level` | `readonly` / `standard` / `power` | `standard` | highest wins | Declared privilege ([levels](#levels)). |
 | `confirm` | bool | `false` | any `true` wins | A human must type the profile name; agents are refused. |
 | `tool` | `claude` / `codex` / `gemini` | `claude` | later wins | What `actas run` launches. `actas run -t TOOL` overrides it. |
@@ -609,7 +622,8 @@ In order: `defaults`, the linearized `use:` chain, the profile.
 | `"inherit"` (module) | turns the module off and lets the shell's variables through |
 | `level` | the highest in the chain; a lower declared level is an error |
 | `confirm` | true if any layer says so |
-| `match`, `use`, `description`, `agents_may_use` | taken from the profile itself only |
+| `match`, `use`, `description` | taken from the profile itself only |
+| `agents_may_use` | the profile's own list, else the one in `defaults:` (never from `use:`) |
 
 ### The process environment
 
@@ -693,6 +707,7 @@ load and runs it on the same engine.
 | `secret_env.VAR: key` | `secret_env.VAR: "sops:<env>/<key>"` |
 | `secret_env.GH_TOKEN` | `github.auth: "sops:<env>/<key>"` (git gets a helper for it) |
 | `defaults:` (shallow: a block in the environment replaces the whole default block) | `defaults:` (deep merge) |
+| `agents_may_use` (in an environment or in `defaults:`) | `agents_may_use` (the one v2 key a v1 file accepts; it only affects agents) |
 
 For a v1 file, actas keeps v1 behaviour where v2 would differ:
 

@@ -36,8 +36,9 @@ Contents:
    `standard` (the default) or `power`.
 2. **Put `confirm: true` on anything dangerous.** Agents can never use those
    profiles, and you type the profile name to use them yourself.
-3. **List the profiles an agent may hop to** with `agents_may_use`. actas
-   refuses every other profile (see [The gate](#the-gate) for sessions not
+3. **List the profiles an agent may hop to** with `agents_may_use` (or
+   `["*"]` in `defaults:` to let agents use every profile at the same or a
+   lower level). actas refuses every other profile (see [The gate](#the-gate) for sessions not
    started by `actas run`). These checks are guardrails against mistakes, not
    a boundary: the boundary is each profile's credentials (see
    [Threat model](#threat-model)).
@@ -167,10 +168,24 @@ profiles:
 | Key | Where | Meaning |
 |---|---|---|
 | `confirm: true` | any profile or role, not `defaults` (OR'd through `use:`) | A human must type the profile name to use it. Agents are **always** refused, even when it is their own session profile. `actas sync` skips these profiles. |
-| `agents_may_use: [names]` | profiles only, not inherited | Profiles an agent in a session of this profile may `actas exec` without you, if they are at the **same or a lower level** and have no `confirm`. Hops do not chain: when an agent starts a nested `actas run T`, the new session keeps the outer session's list (stored in its record as `allowed`), not T's. |
+| `agents_may_use: [names]` or `["*"]` | profiles and `defaults:` (a profile's own list replaces the default); not inherited through `use:` | Profiles an agent in a session of this profile may `actas exec` without you (`"*"`: any profile), if they are at the **same or a lower level** and have no `confirm`. Hops do not chain: when an agent starts a nested `actas run T`, the new session keeps the outer session's list (stored in its record as `allowed`), not T's. |
 
 Hops sideways also need `agents_may_use`. Without it, an agent in
 `client-a-test` could reach `client-b`, which is also `standard`.
+
+If you would rather let agents push and deploy as any of your everyday
+profiles, and keep the gate only for higher levels and `confirm`, allow them
+all:
+
+```yaml
+defaults:
+  agents_may_use: ["*"]
+```
+
+A v1 manifest accepts the same key in `defaults:` or in an environment. The
+`not_allowed` refusal says where to add a profile. A nested `actas run`
+session keeps the list it started with, so start a new session after you
+change it there.
 
 `doctor` flags:
 

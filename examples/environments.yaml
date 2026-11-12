@@ -11,8 +11,9 @@
 # This file holds names and references only, never secret values.
 version: 2
 
-# The first layer of every profile. match, use, description, agents_may_use,
-# level and confirm are not allowed here (put them in a role and `use:` it).
+# The first layer of every profile. match, use, description, level and confirm
+# are not allowed here (put them in a role and `use:` it). agents_may_use here
+# is the list for every profile without its own (["*"]: any profile).
 defaults:
   git: { name: Ada Example, email: ada@example.com }
 

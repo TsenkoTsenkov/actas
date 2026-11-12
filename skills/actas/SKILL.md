@@ -28,7 +28,8 @@ Credentials here come from actas. They follow the session, not the directory.
    - `mismatch`: true when the current directory is matched to another profile
      (not when only the fallback profile covers it).
    - `agents_may_use`: profiles you may try with `actas exec` (same or lower
-     level, no `confirm`; in a nested run the outer session's list applies).
+     level, no `confirm`; `"*"` means any profile; in a nested run the outer
+     session's list applies).
    - `identities`: the AWS profile, GitHub account, git identity and LLM provider in effect.
 2. Run the command when `session.profile` is set and the profile is right.
 3. When you need another profile, run `actas list --json` to see the names,

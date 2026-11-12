@@ -403,7 +403,7 @@ Credentials follow the **session**, not the directory. An agent started by
   only the `fallback:` covers is no mismatch).
 - An agent can use another profile only through
   `actas exec <profile> --reason "…" -- <cmd>`, and only if the session's
-  profile lists it in `agents_may_use` at the same or a lower level. `confirm`
+  profile lists it in `agents_may_use` (`["*"]` for any) at the same or a lower level. `confirm`
   profiles always need a human.
 - Every refusal starts with an `actas-stop:` line and includes a ready-to-run
   command. You run it yourself in a separate terminal. There is no in-session
