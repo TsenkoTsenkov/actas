@@ -375,6 +375,8 @@ isolated). A **home** is either a name, which means a directory actas manages un
 | `sso_session` | string | SSO logins (`actas login`, `run --login`, `aws-handoff --login`) run `aws sso login --sso-session <name>` instead of `--profile`. |
 
 - Clears from your shell: `AWS_PROFILE AWS_DEFAULT_PROFILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_REGION AWS_DEFAULT_REGION`,
+  the role and container credential overrides `AWS_ROLE_ARN AWS_ROLE_SESSION_NAME AWS_WEB_IDENTITY_TOKEN_FILE AWS_CONTAINER_CREDENTIALS_* AWS_CONTAINER_AUTHORIZATION_TOKEN*`
+  (the SDKs read them before an SSO profile),
   plus `AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE` when some layer uses `config_file` or `aws: null`.
 - `aws: null`: `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` point at two empty files under
   `homes/aws/_off/`.
@@ -393,7 +395,9 @@ isolated). A **home** is either a name, which means a directory actas manages un
 | `home` | home | `CLOUDSDK_CONFIG`: a separate gcloud login and configuration set. |
 | `adc_file` | path | `GOOGLE_APPLICATION_CREDENTIALS` |
 
-- Also clears `GOOGLE_CREDENTIALS`, `GOOGLE_OAUTH_ACCESS_TOKEN`.
+- Also clears `GOOGLE_CREDENTIALS`, `GOOGLE_OAUTH_ACCESS_TOKEN`, and `CLOUDSDK_CORE_ACCOUNT`,
+  `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`, `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` (they override the
+  configuration's account).
 - `gcp: null`: `CLOUDSDK_CONFIG` points at an empty directory.
 - In agent sessions, when the profile has a gcp block: `CLOUDSDK_CORE_DISABLE_PROMPTS=1`.
 - `actas login [profile] --module gcp [--adc]` runs `gcloud auth login` (and
@@ -409,7 +413,11 @@ isolated). A **home** is either a name, which means a directory actas manages un
 | `tenant` | string | `ARM_TENANT_ID` |
 | `location` | string | `AZURE_DEFAULTS_LOCATION` |
 
-- Also clears `ARM_CLIENT_ID ARM_CLIENT_SECRET ARM_USE_CLI ARM_USE_OIDC ARM_USE_MSI AZURE_DEFAULTS_GROUP`.
+- Also clears `ARM_CLIENT_ID ARM_CLIENT_SECRET ARM_USE_CLI ARM_USE_OIDC ARM_USE_MSI AZURE_DEFAULTS_GROUP`,
+  `ARM_ACCESS_KEY ARM_CLIENT_CERTIFICATE_PATH ARM_CLIENT_CERTIFICATE_PASSWORD ARM_OIDC_TOKEN`, and the
+  Azure SDK's service-principal variables `AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
+  AZURE_SUBSCRIPTION_ID AZURE_CLIENT_CERTIFICATE_PATH AZURE_CLIENT_CERTIFICATE_PASSWORD
+  AZURE_FEDERATED_TOKEN_FILE AZURE_USERNAME AZURE_PASSWORD`.
 - Without `home`, `az` keeps using `~/.azure` and its current subscription; only tools that read
   `ARM_SUBSCRIPTION_ID` (Terraform) are pinned. `status --why` notes this.
 - `azure: null`: `AZURE_CONFIG_DIR` points at an empty directory.
@@ -425,7 +433,7 @@ Set exactly one of `auth` or `home`.
 |---|---|---|
 | `auth` | ref | A token: `gh:<login>[@host]` (a login stored by `gh auth login`) or any other [ref](#secret-references), such as a fine-grained PAT in sops. |
 | `home` | home | `GH_CONFIG_DIR`: a separate `gh` login, used as is. |
-| `host` | hostname | Default `github.com`. Must agree with `@host` in a `gh:` ref. |
+| `host` | hostname | Default `github.com`. Must agree with `@host` in a `gh:` ref; a `gh:<login>` without `@host` is the login on this host (`gh:ada` with `host: ghe.corp.example` reads `gh:ada@ghe.corp.example`). |
 
 With `auth`:
 
@@ -475,6 +483,10 @@ any your shell already has. `ACTAS_GIT_BASE` marks where actas's pairs start (0 
 `shell --format env` and `desktop --vscode`), so a nested `actas exec`/`run` replaces them,
 including another profile's credential helper. actas never edits `~/.gitconfig`. `git: null` just sets no identity.
 
+- Clears: `GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_SSH_COMMAND`.
+  git ranks these above `user.name`/`user.email`/`core.sshCommand`, so another client's exports
+  (a direnv `.envrc`, an outer session) would otherwise win. `inherit: [GIT_SSH_COMMAND]` keeps
+  one; `git: inherit` keeps them all. (`GIT_SSH` is left alone: `core.sshCommand` beats it.)
 - In agent sessions, when the profile has a git block: `GIT_TERMINAL_PROMPT=0`.
 
 #### env and secret_env

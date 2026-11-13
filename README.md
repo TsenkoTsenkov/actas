@@ -225,8 +225,8 @@ quick start. Inside `~/code/client-a`, Claude talks to the gateway, `aws` uses
 the client email. A repo cloned over SSH (`git@github.com:…`) pushes with
 whatever key `ssh` picks, usually your personal one: add
 `git: { ssh_key: ~/.ssh/id_ed25519_client_a }` to the profile, which makes git
-use only that key. A stray `AWS_ACCESS_KEY_ID` or `ANTHROPIC_API_KEY` in your
-shell cannot leak in: actas clears the variables of every module your
+use only that key. A stray `AWS_ACCESS_KEY_ID`, `ANTHROPIC_API_KEY` or another
+client's `GIT_AUTHOR_EMAIL` in your shell cannot leak in: actas clears the variables of every module your
 manifest uses, unless the profile sets them.
 
 **No cloud account at all.** `aws: null` in a profile makes the AWS CLI see an
@@ -547,7 +547,8 @@ translator maps them onto the v2 engine and keeps v1 behaviour where it
 matters: no built-in agent rules, the gateway token is still exported, and
 only the variables v1 already managed are cleared (AWS ones only where the
 environment has an `aws:` block, so elsewhere your shell's `AWS_PROFILE`
-stays, as in v1).
+stays, as in v1; `GIT_AUTHOR_*`/`GIT_COMMITTER_*` only for the git name and
+email the environment sets).
 
 ```bash
 actas migrate            # print the v2 version and list what would change
