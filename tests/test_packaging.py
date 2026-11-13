@@ -108,7 +108,7 @@ class BuildHook(Isolated):
                            text=True, env=dict(self.env, PYTHONPATH=str(pkg)))
         version = re.search(r'__version__ = "([^"]+)"', BIN.read_text()).group(1)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.split(), ["package", "actas", version])
+        self.assertEqual(r.stdout.split(), ["package", "actas", version, "(package)"])
 
     @unittest.skipUnless(os.environ.get("ACTAS_TEST_BUILD") and shutil.which("uv"),
                          "set ACTAS_TEST_BUILD=1 (needs uv and network for hatchling)")

@@ -307,12 +307,9 @@ instead (`actas doctor` says which one is in use, on its `config dir` line).
 helper strings (`secret --ref`, `git-credential`, the SessionStart hook):
 
 ```bash
-# with v2: an empty manifest makes every synced file stale, so --clean removes
-# what actas wrote (--force: also files that hide ~/.claude/settings.json routing)
-# (~/.config/ccenv instead of ~/.config/actas if you never moved it)
-mv ~/.config/actas/environments.yaml ~/actas-v2.yaml
-echo '{"version": 2, "profiles": {}}' > ~/.config/actas/environments.yaml
-actas sync --clean --force
+# with v2: remove what actas wrote in every synced file
+# (--force: also files that hide ~/.claude/settings.json routing)
+actas sync --clean --all --force
 # restore the v1 manifest as above, then reinstall v1, which is called ccenv
 # and reads only ~/.config/ccenv (move the directory back if you moved it)
 # (for a git checkout: git -C <checkout> checkout <previous commit>)
@@ -391,7 +388,7 @@ Do these when you upgrade; `actas doctor` warns about each until it is done.
 
    ```bash
    rm ~/.claude/skills/ccenv          # a link; rm -r if it is a copied directory
-   ln -s <checkout>/skills/actas ~/.claude/skills/actas   # or copy the directory
+   actas setup skill                  # or: ln -s <checkout>/skills/actas ~/.claude/skills/actas
    ```
 
 3. **AGENTS.md blocks** you pasted from `ccenv instructions` also look for
@@ -418,8 +415,10 @@ Run `actas doctor` after each:
    `CCENV_STATE` → `ACTAS_STATE`, `CCENV_AGENT` → `ACTAS_AGENT`,
    `CCENV_PATH_EXTRA` → `ACTAS_PATH_EXTRA`, and anything that reads `$CCENV`
    (a prompt, a script) → `$ACTAS`.
-4. Replace `use ccenv` with `use actas` in `.envrc` files, and update your
-   `~/.config/direnv/direnvrc` from `actas instructions --direnv`.
+4. Replace `use ccenv` with `use actas` in `.envrc` files, and replace the
+   function in your `~/.config/direnv/direnvrc` with `actas setup direnv`
+   (it writes `~/.config/direnv/lib/actas.sh`; delete the old copy from
+   direnvrc), or with the output of `actas instructions --direnv`.
 5. Secret refs you named after the tool, such as `keychain:ccenv/client-a`,
    keep working as they are; the name inside a ref is only a label.
 6. Stop typing `ccenv`. The alias will be removed in a later major version.

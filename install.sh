@@ -9,7 +9,11 @@
 # SHA-256, and installs the file with mode 0755. It never uses sudo.
 # If the destination is a symlink (for example into a git checkout), it
 # refuses unless --force, and then replaces the link itself; it never writes
-# through a link.
+# through a link. It never replaces a uv or pipx install's link (use
+# `uv tool upgrade actas`, or uninstall that first).
+#
+# Uninstall: `actas sync --clean --all`, then rm ~/.local/bin/actas (see the
+# README's Uninstall section).
 #
 # The checksum guards against a broken or truncated download. To check that
 # the file was built by this repository's release workflow, run the
@@ -43,8 +47,9 @@ Installs the actas release asset (SHA-256 checked) as DIR/actas, mode 0755.
   --version TAG   release tag such as v2.0.0, or latest (default; ACTAS_VERSION)
   --dir DIR       install directory (default ~/.local/bin; ACTAS_INSTALL_DIR)
   --repo O/N      GitHub repository (default TsenkoTsenkov/actas; ACTAS_REPO)
-  --force         replace a symlink at DIR/actas (the link itself, never its target)
-Never uses sudo.
+  --force         replace a symlink at DIR/actas (the link itself, never its target;
+                  never a uv or pipx install's link)
+Never uses sudo. To uninstall: actas sync --clean --all, then rm DIR/actas.
 EOF
 }
 
@@ -124,10 +129,17 @@ head -n 1 "$TMP/actas" | grep -q '^#!.*python' ||
 say "sha256 ok: $got"
 
 DEST=$DIR/actas
+target=
+[ ! -L "$DEST" ] || target=$(readlink "$DEST" 2>/dev/null || echo '?')
+# A uv or pipx install owns DIR/actas and DIR/ccenv (and puts its links back
+# on upgrade): never replace one of them, even with --force.
+case $target in
+	*/uv/tools/* | */pipx/venvs/* | */tools/actas/bin/actas | */venvs/actas/bin/actas)
+		die "$DEST is managed by uv or pipx (-> $target). Update it with 'uv tool upgrade actas' (or 'pipx upgrade actas'), or remove it first with 'uv tool uninstall actas' (or 'pipx uninstall actas') and re-run install.sh." ;;
+esac
 if [ -L "$DEST" ]; then
 	if [ "$FORCE" -ne 1 ]; then
-		target=$(readlink "$DEST" 2>/dev/null || echo '?')
-		die "$DEST is a symlink (to $target), e.g. into a git checkout. Not writing through it. Re-run with --force to replace the link itself, or update the checkout instead."
+		die "$DEST is a symlink (to $target). Not writing through it. If it points into a git checkout, update with git pull there; to replace the link itself with the release file, re-run with --force."
 	fi
 elif [ -d "$DEST" ]; then
 	die "$DEST is a directory"
@@ -161,9 +173,19 @@ case ":${PATH:-}:" in
 	*) say "$DIR is not on your PATH; add it, e.g.: export PATH=\"$DIR:\$PATH\"" ;;
 esac
 # Legacy: actas was called ccenv. An old install keeps working (synced
-# settings files may still call it); it is left alone.
-if [ -e "$DIR/ccenv" ] || [ -L "$DIR/ccenv" ]; then
-	say "$DIR/ccenv is the old (pre-rename) install and still works; run actas sync so synced files call actas, then remove it, or keep the old name as an alias: ln -sf actas '$DIR/ccenv'"
+# settings files may still call it); it is left alone. A ccenv link that is
+# already an alias of actas needs no note.
+OLD_NOTE="$DIR/ccenv is the old (pre-rename) install and still works; run actas sync so synced files call actas, then remove it, or keep the old name as an alias: ln -sf actas '$DIR/ccenv'"
+if [ -L "$DIR/ccenv" ]; then
+	ctarget=$(readlink "$DIR/ccenv" 2>/dev/null || echo)
+	case $ctarget in
+		actas | "$DEST" | */bin/actas) ;;
+		*/tools/actas/bin/ccenv | */venvs/actas/bin/ccenv)
+			say "$DIR/ccenv is the alias from a uv/pipx install of actas, which still runs that install; remove it with 'uv tool uninstall actas' (or pipx), or point it at this install: ln -sf actas '$DIR/ccenv'" ;;
+		*) say "$OLD_NOTE" ;;
+	esac
+elif [ -e "$DIR/ccenv" ]; then
+	say "$OLD_NOTE"
 fi
 say "optional authenticity check: gh attestation verify '$DEST' --repo $REPO"
 say "next: actas init && actas doctor"

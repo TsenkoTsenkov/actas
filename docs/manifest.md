@@ -485,7 +485,10 @@ secret_env: { NPM_TOKEN: "sops:client-a/npm", SENTRY_AUTH_TOKEN: "op://Work/Sent
 ```
 
 - `env` values are literal text: `~` and `$VARS` are **not** expanded, so write absolute paths.
-  Numbers are converted to text; booleans are an error (quote `"true"`, `"yes"`, `"on"`).
+  A value is passed exactly as written: `0755`, `012345678901`, `0x1F`, `1.10`, `1:30`,
+  `2024-01-01`, `yes`, `on` and `NO` all stay that text. Plain numbers such as `8080` are
+  converted to text (a decimal such as `1.5` with a warning). `true` and `false` are an error
+  (quote them: `"true"`).
   `actas sync` writes `env` into `.claude/settings.local.json`, so `doctor` warns when a name looks
   secret (`KEY`, `TOKEN`, `SECRET`, `AUTH`, `PASSWORD`, `HEADERS`).
 - `secret_env` values must be [refs](#secret-references) (or `null`, which removes the variable). They are read at launch into the process
@@ -668,7 +671,13 @@ never names (`GITLAB_TOKEN` exported in your shell profile, …) are left alone;
   `codex.home` (a warning), `permissions.builtin: false` (an info line naming the layer), a login
   found in an `_off` home (an error), a config directory readable by others, and, when the
   manifest uses Gemini, `.env` files Gemini CLI would load.
-- The manifest may be YAML (needs PyYAML or `yq`) or JSON (no dependency).
+- The manifest may be YAML (needs PyYAML or mikefarah `yq`) or JSON (no dependency). PyYAML and
+  `yq` read it the same way, close to YAML 1.2: only `true`/`false` (any case) are booleans, and
+  only a number that reads back as written (`42`, `-3`, `1.5`) is a number. YAML 1.1's other
+  forms stay text: `yes`/`no`/`on`/`off`, leading-zero and hex numbers (no octal), `1_000`,
+  `1:30` and dates. A version 1 file is read as before (PyYAML's YAML 1.1 rules), so
+  `actas migrate` converts it unchanged. The Python `yq` some Linux distributions ship reads
+  YAML 1.1 rules; install PyYAML there.
 
 ### Files actas uses
 

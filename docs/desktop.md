@@ -78,6 +78,7 @@ actas sync --dry-run      # key names that would change; writes nothing
 actas sync                # write every profile's directories
 actas sync client-a       # one profile
 actas sync --clean        # also remove what actas wrote where no profile syncs any more
+actas sync --clean --all  # remove what actas wrote in every synced file (before uninstalling)
 ```
 
 `sync` writes the profile's **non-secret** settings into
@@ -419,7 +420,7 @@ login session's environment, not your shell's. Three ways in:
 2. **direnv** for editors with a direnv extension:
 
    ```bash
-   actas instructions --direnv >> ~/.config/direnv/direnvrc
+   actas setup direnv        # writes ~/.config/direnv/lib/actas.sh, which direnv loads
    echo 'use actas' >> ~/code/client-a/.envrc && direnv allow ~/code/client-a
    ```
 

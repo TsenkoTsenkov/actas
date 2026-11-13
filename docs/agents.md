@@ -507,7 +507,10 @@ To give Claude the full rules:
 
 - `actas instructions >> AGENTS.md`, plus `@AGENTS.md` in `CLAUDE.md`. Only
   the rules go to stdout; the placement hint goes to stderr. Or:
-- copy `skills/actas` to `~/.claude/skills/actas`. The skill pre-allows only
+- run `actas setup skill`, which writes the skill this actas carries to
+  `~/.claude/skills/actas/SKILL.md` (works for uv/pipx and install.sh too; run it
+  again after an upgrade), or link a checkout's `skills/actas` there. It is
+  human-only, like `sync`. The skill pre-allows only
   `actas status` and `actas list`. `actas exec` is deliberately left out, so
   Claude asks you first.
 
@@ -534,8 +537,8 @@ Cloud sessions have no access to your machine. When one needs AWS:
    Add `--login` to log in first.
 2. Paste the block into the session.
 
-To have the handoff in cloud sessions, commit `skills/aws-handoff` to the
-project as `.claude/skills/aws-handoff/SKILL.md`. It is user-invoked: type
+To have the handoff in cloud sessions, run `actas setup skill aws-handoff` in
+the project (it writes `.claude/skills/aws-handoff/SKILL.md`) and commit it. It is user-invoked: type
 `/aws-handoff [profile]` in the session and it gives a scripted handoff.
 
 Remote Control is a local session driven from claude.ai: start it with

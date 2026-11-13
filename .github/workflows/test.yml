@@ -39,6 +39,12 @@ jobs:
         run: |
           brew install sops age
           echo "ACTAS_TEST_REAL_SOPS=1" >> "$GITHUB_ENV"
+      # One leg with PyYAML, so the README and examples/ manifests (tests that
+      # skip without a YAML parser) are checked; the others cover the yq and
+      # bare-Python (JSON) paths.
+      - name: Install PyYAML (ubuntu, 3.13)
+        if: runner.os == 'Linux' && matrix.python == '3.13'
+        run: python -m pip install pyyaml
       - run: python -m unittest discover -s tests -v
 
   # Python 3.9 is end-of-life and setup-python no longer offers it on
@@ -64,12 +70,18 @@ jobs:
         run: uv build
       - name: The packaged command reports the script's version
         run: |
-          want="$(python3 bin/actas --version)"
+          # "actas X.Y.Z (...)": the part in brackets names the install.
+          want="$(python3 bin/actas --version | awk '{ print $1, $2 }')"
           got="$(uv tool run --from ./dist/*.whl actas --version)"
           alias="$(uv tool run --from ./dist/*.whl ccenv --version)"
           echo "script: $want / package: $got / deprecated ccenv alias: $alias"
-          test "$want" = "$got"
-          test "$want" = "$alias"
+          test "$want (package)" = "$got"
+          test "$want (package)" = "$alias"
+      - name: The packaged command prints the bundled skills and direnv function
+        run: |
+          uv tool run --from ./dist/*.whl actas instructions --skill | diff - skills/actas/SKILL.md
+          uv tool run --from ./dist/*.whl actas instructions --skill aws-handoff | diff - skills/aws-handoff/SKILL.md
+          uv tool run --from ./dist/*.whl actas instructions --direnv | diff - contrib/direnvrc
       - name: Lint install.sh
         run: |
           sh -n install.sh

@@ -341,6 +341,100 @@ use_actas() {
 # Deprecated: `use ccenv`, the pre-rename name, keeps working.
 use_ccenv() { use_actas "$@"; }
 """
+# The Claude Code skills (`actas instructions --skill [NAME]`, `actas setup
+# skill`), so a uv/pipx or install.sh install has them too. skills/*/SKILL.md
+# are copies of these (a test checks them byte for byte).
+SKILL_ACTAS_HEAD = """\
+---
+name: actas
+description: Check which credentials (LLM provider, cloud accounts, GitHub/git identity) this session uses, and switch to another actas profile or ask the user for one when a command fails with an auth or permission error. Use before cloud, GitHub, registry or deploy commands.
+allowed-tools: Bash(actas status), Bash(actas status *), Bash(actas list), Bash(actas list *)
+---
+
+"""
+SKILL_ACTAS_HOWTO = """\
+## How to use this skill
+
+1. Run `actas status --json`. Read these fields:
+   - `session.profile` / `session.source`: if `session.profile` is null, this
+     session has no actas profile (actas did not start it and no synced
+     settings name one). Your environment may not hold the reported profile's
+     credentials, and `actas exec` works only for this directory's readonly
+     profile. Ask the user to start you with `actas run`.
+   - `profile` and `level`: the profile actas resolved (the session's, or the
+     directory's when there is no session), and `readonly`, `standard` or `power`.
+   - `mismatch`: true when the current directory is matched to another profile
+     (not when only the fallback profile covers it).
+   - `agents_may_use`: profiles you may try with `actas exec` (same or lower
+     level, no `confirm`; `"*"` means any profile; in a nested run the outer
+     session's list applies).
+   - `identities`: the AWS profile, GitHub account, git identity and LLM provider in effect.
+2. Run the command when `session.profile` is set and the profile is right.
+3. When you need another profile, run `actas list --json` to see the names,
+   then `actas exec <profile> --reason "<why>" -- <one command>`. Claude asks
+   the user before it runs `actas exec`, and actas then decides on its own.
+4. When the first stderr line starts with `actas-stop:`, relay the `ask_user`
+   text word for word and stop. Do not retry.
+5. When a command fails with an auth or permission error and there is no
+   `actas-stop:` line, run `actas status --probe`. It exits 4 with
+   `actas-stop: code=expired` when a login has expired.
+"""
+SKILLS = {
+    "actas": SKILL_ACTAS_HEAD + AGENT_RULES + "\n\n" + SKILL_ACTAS_HOWTO,
+    "aws-handoff": """\
+---
+name: aws-handoff
+description: Get short-lived AWS credentials into a session that cannot see the local AWS SSO cache (for example a Claude Code cloud session). The user runs `actas aws-handoff` in their own terminal and pastes the result; the skill then verifies the identity.
+argument-hint: "[profile] [--profile NAME] [--duration SECONDS] [--stdout] [--login]"
+disable-model-invocation: true
+allowed-tools: Bash(aws sts get-caller-identity), Bash(aws sts get-caller-identity *)
+---
+
+# AWS credential handoff
+
+Cloud sessions cannot see the user's `~/.aws` or SSO cache, so they have no
+AWS access until a human hands credentials over. `actas aws-handoff` mints
+short-lived ones on the user's machine. It is **human-only**: inside any agent
+session, actas refuses it with an `actas-stop: ... reason=human_only` line.
+So never run it yourself, and never ask for long-lived keys.
+
+## Steps
+
+1. Tell the user, word for word (fill in the arguments, if any):
+
+   > On your own machine, in a terminal (not inside an agent session), run
+   > `actas aws-handoff $ARGUMENTS` and paste the result here.
+
+   By default the block goes to their clipboard. With `--stdout` it is printed
+   instead.
+
+2. If `actas aws-handoff` was already run inside this session and printed a
+   line starting with `actas-stop:`, it was refused. Show the user the
+   `ask_user` text exactly, which tells them to run it in their own terminal,
+   and stop. Do not retry.
+
+3. If the user reports that the AWS SSO session has expired (the command exits
+   with `actas-stop: code=expired`), tell them to run
+   `actas login <profile>` in their terminal first, then retry step 1. Running
+   `actas aws-handoff <profile> --login` does both. Never run `aws sso login`
+   yourself.
+
+4. The pasted block is a short shell snippet that replaces `~/.aws/credentials`
+   (and `~/.aws/config` when a region is known) with a `[default]` profile in
+   this session. After it has run, run
+   `aws sts get-caller-identity` and report the account and the role (from the
+   ARN) to the user.
+
+## Important
+
+- The credentials become part of this session's transcript. Keep the TTL
+  short (`--duration` applies when actas has to trade static keys for a
+  session token), and prefer a profile with a narrow role.
+- actas never hands over a long-lived access key. It trades static IAM keys
+  for a session token first.
+- Do not repeat the credential values in your replies.
+""",
+}
 # `actas desktop` (SPEC 11.2): what reaches Claude Desktop for each provider.
 DESKTOP_PROVIDER = {
     "subscription": "Desktop uses the claude.ai account the app is signed in to (one per app).",
@@ -511,37 +605,100 @@ def did_you_mean(word, choices):
 
 # ======================================================== loading the manifest
 
-def yq_json(text):
+# Manifest scalars are read the same way by PyYAML and by yq (YAML 1.2 core,
+# stricter on numbers): only true/false are booleans, and only a number that
+# reads back as written (42, -3, 1.5) is a number. Everything YAML 1.1 or yq
+# would turn into something else stays the text as written: yes/no/on/off,
+# 0755 and 012345678901 (octal, or a dropped leading zero), 0x1F, 1_000, 1:30,
+# 2024-01-01, 1.10, 1e3. Version 1 files keep the parse they always had.
+NUMBER_TEXT = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
+YQ_SCALAR = "=actas-scalar="        # wraps yq's number and date scalars (their source text)
+YQ_TYPED = ('(.. | select(tag == "!!int" or tag == "!!float" or tag == "!!timestamp")) '
+            '|= {"%s": (. tag = "!!str")}' % YQ_SCALAR)
+_YAML_LOADER = {}
+
+
+def scalar_value(text):
+    """A plain YAML number or date scalar's value: the number when it reads
+    back exactly as written, else the text."""
+    if NUMBER_TEXT.match(text):
+        v = float(text) if "." in text else int(text)
+        if repr(v) == text:
+            return v
+    return text
+
+
+def yaml_loader(yaml):
+    """PyYAML's SafeLoader with the scalar rules above (built once)."""
+    if "loader" not in _YAML_LOADER:
+        class Loader(yaml.SafeLoader):
+            pass
+        drop = {"tag:yaml.org,2002:" + t for t in ("bool", "int", "float", "timestamp")}
+        Loader.yaml_implicit_resolvers = {k: [(t, r) for t, r in v if t not in drop]
+                                          for k, v in yaml.SafeLoader.yaml_implicit_resolvers.items()}
+        Loader.add_implicit_resolver("tag:yaml.org,2002:bool",
+                                     re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF"))
+        Loader.add_implicit_resolver("tag:actas:number", NUMBER_TEXT, list("-0123456789"))
+        Loader.add_constructor("tag:actas:number", lambda ld, node: scalar_value(ld.construct_scalar(node)))
+        _YAML_LOADER["loader"] = Loader
+    return _YAML_LOADER["loader"]
+
+
+def unwrap_yq(v):
+    if isinstance(v, dict):
+        if len(v) == 1 and isinstance(v.get(YQ_SCALAR), str):
+            return scalar_value(v[YQ_SCALAR])
+        return {k: unwrap_yq(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [unwrap_yq(x) for x in v]
+    return v
+
+
+def yq_json(text, typed=False):
     """The `yq` binary's JSON for text, or None. mikefarah/yq needs `-o json`;
     the Python kislyuk/yq (Debian/Ubuntu's apt package) prints JSON by
-    default and rejects `-o` (F42)."""
+    default and rejects `-o` (F42). typed: mikefarah/yq hands over number and
+    date scalars as written, for scalar_value(); the kislyuk one rejects that
+    expression and reads YAML 1.1, like plain PyYAML."""
     if shutil.which("yq"):
-        for args in (["-o", "json", "."], ["."]):
+        tries = ([["-o", "json", YQ_TYPED]] if typed else []) + [["-o", "json", "."], ["."]]
+        for i, args in enumerate(tries):
             r = run(["yq"] + args, input=text)
             if r.returncode == 0:
                 with suppress(ValueError):
-                    return json.loads(r.stdout or "null")
+                    out = json.loads(r.stdout or "null")
+                    return unwrap_yq(out) if typed and i == 0 else out
     return None
 
 
+def is_v1(doc):
+    """A parsed manifest that build_config reads as version 1."""
+    return isinstance(doc, dict) and doc.get("version") in (1, None) and doc.get("version") is not True
+
+
 def parse_text(text, label):
-    """Parse with the first parser available: PyYAML, then the `yq` binary,
-    then plain JSON (YAML is a superset of JSON), so actas runs on a bare
-    Python install. An empty file is {}. Raises ManifestError."""
+    """Parse with the first parser available: PyYAML, then plain JSON (YAML
+    is a superset of JSON), then the `yq` binary, so actas runs on a bare
+    Python install. An empty file is {}. Raises ManifestError. Scalars follow
+    the rules above; a version 1 file is parsed again the way v1 did
+    (YAML 1.1 with PyYAML, plain yq)."""
     try:
         import yaml
     except ImportError:
         yaml = None
     if yaml is not None:
         try:
-            return yaml.safe_load(text) or {}
+            doc = yaml.load(text, Loader=yaml_loader(yaml)) or {}
+            return (yaml.safe_load(text) or {}) if is_v1(doc) else doc
         except yaml.YAMLError as e:
             raise ManifestError(f"{label}: invalid YAML: {e}")
     if not text.strip():
         return {}
     with suppress(ValueError):
         return json.loads(text)
-    parsed = yq_json(text)
+    parsed = yq_json(text, typed=True)
+    if is_v1(parsed):
+        parsed = yq_json(text)
     if parsed is None:
         raise ManifestError(f"cannot parse {label}: no YAML parser here; {YAML_HINT}, "
                             "or write it as JSON")
@@ -3423,13 +3580,18 @@ def cmd_sync(a):
     release()
     if a.shared:
         die("sync --shared is not in actas 2.0: sync writes settings.local.json only", 2)
-    cfg = load()
+    if a.all and (not a.clean or a.env or a.include_confirm):
+        die("--all goes with --clean alone: actas sync --clean --all [--dry-run] [--force]", 2)
+    # --clean --all (uninstalling): every ledgered file, without reading the
+    # manifest (it may be gone or broken); nothing new is written.
+    cfg = None if a.all else load()
     if a.env:
         resolve(a.env, cfg=cfg)          # an unknown name or a role dies with the usual message
     ledger = load_ledger()
     before, failed, done, broken = copy.deepcopy(ledger), False, set(), set()
-    off_aside(move=not a.dry_run)    # synced files point at the `_off` homes too (F2)
-    for name in [a.env] if a.env else list(cfg.profiles):
+    if not a.all:
+        off_aside(move=not a.dry_run)    # synced files point at the `_off` homes too (F2)
+    for name in [] if a.all else [a.env] if a.env else list(cfg.profiles):
         try:
             prof = merge_profile(name, cfg)
         except ManifestError as e:
@@ -3499,7 +3661,12 @@ def cmd_sync(a):
         ensure_dir(STATE, tighten=True)
         write_private(LEDGER, json.dumps(ledger, indent=2, sort_keys=True) + "\n")
     if not a.dry_run:
-        audit("sync", a.env, "allowed", reason="clean" if a.clean else None)
+        audit("sync", a.env, "allowed", reason="clean-all" if a.all else "clean" if a.clean else None)
+    if a.all and not a.dry_run:
+        if ledger:
+            warn(f"{len(ledger)} synced file(s) kept (see above); {tilde(LEDGER)} still lists them")
+        info(f"actas's own files are under {tilde(ROOT)}, {tilde(STATE)} and {tilde(CACHE)}, "
+             "plus anything you installed with actas setup (README: Uninstall)")
     if failed:
         sys.exit(1)
 
@@ -3586,14 +3753,88 @@ INSTRUCTION_HINTS = {
 
 
 def cmd_instructions(a):
-    """Print AGENT_RULES (or the direnv function) on stdout; hints go to
-    stderr so the output can be appended to a file. Never edits files."""
+    """Print AGENT_RULES (or the direnv function, or a skill) on stdout; hints
+    go to stderr so the output can be appended to a file. Never edits files
+    (`actas setup` writes them)."""
+    if sum(map(bool, (a.direnv, a.skill, a.agent))) > 1:
+        die("--agent, --direnv and --skill are alternatives; give one", 2)
     if a.direnv:
         sys.stdout.write(DIRENVRC)
+        return
+    if a.skill:
+        sys.stdout.write(SKILLS[a.skill])
         return
     print(AGENT_RULES)
     if a.agent:
         info(INSTRUCTION_HINTS[a.agent])
+
+
+def direnv_lib():
+    """direnv sources every $XDG_CONFIG_HOME/direnv/lib/*.sh, like direnvrc."""
+    return Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "direnv" / "lib" / "actas.sh"
+
+
+def setup_write(dest, text, ours, a):
+    """Write one `actas setup` file: say so when it is current, never write
+    through a symlink, and replace an existing file only when it is an
+    earlier copy from actas (ours(old_text)) or with --force."""
+    with suppress(OSError):
+        if dest.read_text() == text:
+            print(f"up to date: {tilde(dest)}")
+            return
+    link = next((x for x in (dest, dest.parent) if x.is_symlink()), None)
+    if link is not None:
+        die(f"{tilde(link)} is a symlink (to {os.readlink(str(link))}); actas does not write through it. "
+            "Update what it points to (e.g. git pull in a checkout), or remove the link and run this again")
+    if dest.is_dir():
+        die(f"{tilde(dest)} is a directory")
+    verb = "write"
+    if os.path.lexists(str(dest)):
+        try:
+            old = dest.read_text(errors="replace")
+        except OSError as e:
+            die(f"cannot read {tilde(dest)}: {e.strerror}")
+        if not ours(old) and not a.force:
+            die(f"{tilde(dest)} exists and was not written by actas; --force replaces it")
+        verb = "replace"
+    if a.dry_run:
+        print(f"would {verb} {tilde(dest)}")
+        return
+    write_private(dest, text)
+    print(f"{paint('wrote', 'green')} {tilde(dest)}")
+
+
+def cmd_setup(a):
+    """Install a file this actas ships: a Claude Code skill or the direnv
+    function (the same text `actas instructions --skill/--direnv` prints),
+    so a uv/pipx or install.sh install needs no checkout. Human-only: it
+    writes outside the repository (a skill's allowed-tools are permissions)."""
+    require_human("setup")
+    if a.what == "skill":
+        if a.file:
+            die("setup skill takes --dir, not --file", 2)
+        name = a.name or "actas"
+        if name not in SKILLS:
+            die(f"no skill {name!r}; one of: {', '.join(SKILLS)}" + did_you_mean(name, SKILLS), 2)
+        base = (Path(a.dir).expanduser() if a.dir else
+                HOME / ".claude" / "skills" if name == "actas"
+                else Path(getattr(a, "cwd", None) or os.getcwd()).expanduser() / ".claude" / "skills")
+        dest = base.absolute() / name / "SKILL.md"
+        setup_write(dest, SKILLS[name], lambda old: f"\nname: {name}\n" in old, a)
+        if name == "aws-handoff" and not a.dry_run:
+            info("commit it to the repository: cloud sessions read the project's .claude/skills")
+        return
+    if a.name or a.dir:
+        die("setup direnv takes no NAME or --dir (use --file)", 2)
+    dest = Path(a.file).expanduser().absolute() if a.file else direnv_lib()
+    setup_write(dest, DIRENVRC, lambda old: "use_actas()" in old, a)
+    rc = dest.parent.parent / "direnvrc"
+    with suppress(OSError):
+        if not a.file and "use_actas()" in rc.read_text():
+            info(f"{tilde(rc)} also defines use_actas (an earlier copy); remove it there, so the "
+                 "copy `actas setup direnv` keeps current is the only one")
+    if not a.dry_run:
+        info("then add `use actas` (or `use actas <profile>`) to a project's .envrc")
 
 
 def cmd_aws_handoff(a):
@@ -3900,14 +4141,22 @@ def cmd_doctor(a):
             f"instructions and refusals tell agents and you to run it; {how}")
     # Legacy: a ccenv skill linked to a checkout dangles after the pull that
     # renamed skills/ccenv, and a copied one looks for the old stop marker.
+    # Without a checkout next to this file (uv/pipx, install.sh), `actas setup skill` installs it.
     skills = Path(__file__).resolve().parent.parent / "skills" / "actas"
-    src = tilde(skills) if (skills / "SKILL.md").is_file() else "<actas checkout>/skills/actas"
     for base in dict.fromkeys(Path(d) / "skills" for d in (HOME / ".claude", os.environ.get("CLAUDE_CONFIG_DIR"))
                               if d):
         old = base / "ccenv"
         rm = f"rm {tilde(old)}" if old.is_symlink() else f"rm -r {tilde(old)}"
+        add_new = (f"ln -s {tilde(skills)} {tilde(base / 'actas')}" if (skills / "SKILL.md").is_file()
+                   else f"actas setup skill --dir {tilde(base)}")
         fix = (f"remove it ({tilde(base / 'actas')} is installed): {rm}" if (base / "actas").exists()
-               else f"replace it: {rm} && ln -s {src} {tilde(base / 'actas')}")
+               else f"replace it: {rm} && {add_new}")
+        with suppress(OSError):
+            cur = base / "actas" / "SKILL.md"
+            if (not cur.parent.is_symlink() and cur.is_file() and "\nname: actas\n" in cur.read_text()
+                    and cur.read_text() != SKILLS["actas"]):
+                add("skill", "info", f"{tilde(cur)} is a copy from another actas version; refresh it: "
+                    f"actas setup skill --dir {tilde(base)}")
         with suppress(OSError):
             if old.is_symlink() and not old.exists():
                 add("skill", "warn", f"{tilde(old)} links to {os.readlink(str(old))}, which no longer exists "
@@ -4068,7 +4317,7 @@ def cmd_migrate(a):
 
 HIDDEN = {"git-credential", "hook"}
 EVERYDAY = ("init", "run", "exec", "status", "list", "login", "sync", "doctor")   # SPEC 0.1.3
-ADVANCED = ("shell", "secret", "desktop", "instructions", "migrate", "aws-handoff")
+ADVANCED = ("shell", "secret", "desktop", "instructions", "setup", "migrate", "aws-handoff")
 DOCS = "https://github.com/TsenkoTsenkov/actas/blob/main/docs/"
 HELP_TOPICS = {
     "manifest": f"""The manifest: {MANIFEST}  (full reference: {DOCS}manifest.md)
@@ -4101,6 +4350,41 @@ confirm profile. Anything else stops with a
 Credentials are the boundary; these rules are a seatbelt. More: {DOCS}agents.md
 """,
 }
+
+
+def version_text():
+    """`actas --version`: the version, then which install runs: `package`
+    (uv/pipx; plus the git commit when the install recorded one) or the git
+    commit of a checkout (`+changes` when bin/actas differs from it). A
+    copied single file (install.sh) prints the version alone."""
+    extra = []
+    if BUILD == "package":
+        extra.append("package")
+        with suppress(Exception):
+            from importlib import metadata
+            dist = metadata.distribution("actas")
+            if Path(str(dist.locate_file("actas_cli.py"))).resolve() == Path(__file__).resolve():
+                vcs = json.loads(dist.read_text("direct_url.json") or "{}").get("vcs_info") or {}
+                if vcs.get("commit_id"):
+                    extra.append(f"git {vcs['commit_id'][:7]}")
+    else:
+        here = Path(__file__).resolve().parent.parent
+        commit = git_out(here, "rev-parse", "--short", "HEAD") if (here / ".git").exists() else None
+        if commit:
+            r = git(here, "diff", "--quiet", "HEAD", "--", "bin/actas")
+            extra.append(f"git {commit}" + ("+changes" if r is not None and r.returncode == 1 else ""))
+    return f"actas {__version__}" + (f" ({', '.join(extra)})" if extra else "")
+
+
+class VersionAction(argparse.Action):
+    """--version, computed only when asked (a checkout runs git)."""
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings, dest=dest, default=default, nargs=0, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(version_text())
+        parser.exit()
 
 
 class Parser(argparse.ArgumentParser):
@@ -4172,7 +4456,8 @@ def build_parser():
     p = Parser(prog="actas", description=__doc__,
                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--cwd", help="resolve the profile as if from this directory")
-    p.add_argument("--version", action="version", version=f"actas {__version__}")
+    p.add_argument("--version", action=VersionAction,
+                   help="show the version and the install (package, or a checkout's git commit)")
     p.add_argument("--no-color", action="store_true", help="no ANSI colours (also: NO_COLOR=1)")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="<command>")
 
@@ -4250,6 +4535,9 @@ def build_parser():
     sy.add_argument("--force", action="store_true",
                     help="with --clean: also remove files that override ~/.claude/settings.json's "
                          "provider routing")
+    sy.add_argument("--all", action="store_true",
+                    help="with --clean: remove what actas wrote in every synced file and write nothing "
+                         "(before uninstalling; works without a manifest)")
     sy.add_argument("--include-confirm", action="store_true", help="also sync confirm profiles")
     sy.add_argument("--shared", action="store_true", help=argparse.SUPPRESS)
     sy.set_defaults(fn=cmd_sync)
@@ -4261,10 +4549,24 @@ def build_parser():
     dk.add_argument("--vscode", action="store_true", help="print claudeCode.environmentVariables")
     dk.set_defaults(fn=cmd_desktop)
 
-    ins = sub.add_parser("instructions", help="print the rules for agents (or the direnv function)")
+    ins = sub.add_parser("instructions", help="print the rules for agents (or the direnv function, or a skill)")
     ins.add_argument("--agent", choices=tuple(INSTRUCTION_HINTS), help="also say where to put them")
     ins.add_argument("--direnv", action="store_true", help="print a use_actas function for direnvrc")
+    ins.add_argument("--skill", nargs="?", const="actas", choices=tuple(SKILLS),
+                     help="print a Claude Code skill's SKILL.md (default: actas)")
     ins.set_defaults(fn=cmd_instructions)
+
+    su = sub.add_parser("setup", help="install the Claude Code skill or the direnv function",
+                        usage="actas setup skill [NAME] [--dir DIR] | actas setup direnv [--file FILE]"
+                              " [--dry-run] [--force]")
+    su.add_argument("what", choices=("skill", "direnv"), help="what to install")
+    su.add_argument("name", nargs="?", metavar="NAME", help=f"skill: {' or '.join(SKILLS)} (default actas)")
+    su.add_argument("--dir", help="skill: the skills directory (default ~/.claude/skills; "
+                                  "aws-handoff: ./.claude/skills)")
+    su.add_argument("--file", help="direnv: the file to write (default ~/.config/direnv/lib/actas.sh)")
+    su.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
+    su.add_argument("--force", action="store_true", help="replace a file actas did not write")
+    su.set_defaults(fn=cmd_setup)
 
     ah = sub.add_parser("aws-handoff", help="short-lived AWS creds for a cloud session")
     ah.add_argument("env", nargs="?", metavar="profile")
