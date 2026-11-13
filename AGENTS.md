@@ -32,6 +32,9 @@ Credentials here come from actas. They follow the session, not the directory.
 ```text
 Need cloud, GitHub, registry or deploy access?
 └─ actas status --json
+   ├─ profile is null    -> no profile covers this directory and this
+   │                        session has none. Do not run remote commands;
+   │                        tell the user (`hint` says what to add).
    ├─ session.profile is null -> this session has no actas profile; tell
    │                        the user (start the agent with `actas run`). Only
    │                        this directory's readonly profile works with

@@ -157,7 +157,10 @@ profiles:
 ```
 
 `claude.settings` is a raw block, merged last into Claude's settings. Its
-`permissions` lists are added to the rules too.
+`permissions` lists are added to the rules too. Through `use:`, its `deny` and
+`ask` lists are unioned and sticky like `permissions` (a later layer cannot
+drop them, not even with `claude.settings: null`); its `allow` list is
+replaced by a later layer's, so composing never allows more than one layer says.
 `claude.settings.permissions.defaultMode: plan` works. `auto` and
 `bypassPermissions` are rejected.
 

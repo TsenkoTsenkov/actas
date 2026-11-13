@@ -285,7 +285,10 @@ profiles:
   scratch: { level: readonly }
 ```
 
-Without `fallback`, running actas outside every `match` is an error that lists your profiles.
+Without `fallback`, running actas outside every `match` is an error that lists your profiles and
+suggests a `match` entry for the directory (its git repository's top directory when it is in one
+under your home). `actas status` there reports no profile (`"profile": null` with `--json`, plus a
+`hint`) and exits 0; `status --why` and `--probe` need a profile and exit 1.
 
 ### Checking your work
 
@@ -335,9 +338,10 @@ Names of profiles and roles: letters, digits, `.`, `_`, `-`, starting with a let
 | `aws`, `gcp`, `azure`, `github`, `git` | map, `inherit` or `null` | — | merged | [Modules](#modules). |
 | `claude`, `codex`, `gemini` | map | — | merged | [Tools](#tools). |
 
-Lists replace earlier lists (`claude.args`, `codex.args`, …), except `permissions.deny`,
-`permissions.ask`, `inherit` and `unset`, which are unioned. `""` sets an empty value; `null`
-removes the key.
+Lists replace earlier lists (`claude.args`, `codex.args`, `claude.settings.permissions.allow`, …),
+except `permissions.deny`, `permissions.ask`, `claude.settings.permissions.deny`,
+`claude.settings.permissions.ask`, `inherit` and `unset`, which are unioned. `""` sets an empty
+value; `null` removes the key.
 
 #### permissions
 
@@ -601,8 +605,9 @@ Details:
 ### Directory matching
 
 - Patterns are expanded (`~`, `$VARS`), then a directory matches when it equals the pattern, is
-  below it, or matches it as a glob (`*` also crosses `/`). `~/code/x/*` does not match
-  `~/code/x` itself.
+  below it, matches it as a glob (`*` also crosses `/`), or is below a directory that matches the
+  glob (`~/code/*/infra` covers `~/code/a/infra/modules`). `~/code/x/*` does not match
+  `~/code/x` itself; plain `~/code/x` covers it and everything below.
 - **The longest matching pattern wins**; on a tie, the profile and pattern listed first.
 - Only when nothing matches: actas retries with your shell's logical `$PWD` (symlinked
   directories), then case-insensitively on macOS, then uses `fallback:`.
@@ -616,7 +621,7 @@ In order: `defaults`, the linearized `use:` chain, the profile.
 |---|---|
 | map | merged key by key, recursively |
 | scalar, ordinary list | the later layer replaces it |
-| `permissions.deny`, `permissions.ask`, `unset` | unioned; a later layer cannot remove them (an error, also through `null` or by replacing the parent map) |
+| `permissions.deny`, `permissions.ask`, `claude.settings.permissions.deny`, `claude.settings.permissions.ask`, `unset` | unioned; a later layer cannot remove them (an error, also through `null` or by replacing the parent map, such as `claude.settings: null`) |
 | `inherit` | unioned |
 | `null` | removes the key; on a module, turns it off and isolates it; in `env`, removes the variable |
 | `"inherit"` (module) | turns the module off and lets the shell's variables through |

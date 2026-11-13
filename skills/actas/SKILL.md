@@ -25,6 +25,8 @@ Credentials here come from actas. They follow the session, not the directory.
      profile. Ask the user to start you with `actas run`.
    - `profile` and `level`: the profile actas resolved (the session's, or the
      directory's when there is no session), and `readonly`, `standard` or `power`.
+     `profile` is null when no profile covers this directory and the session
+     has none: do not run remote commands; tell the user (`hint` says what to add).
    - `mismatch`: true when the current directory is matched to another profile
      (not when only the fallback profile covers it).
    - `agents_may_use`: profiles you may try with `actas exec` (same or lower

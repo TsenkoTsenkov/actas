@@ -153,8 +153,13 @@ LOCAL_ONLY = {"match", "use", "description", "agents_may_use"}
 # profile without its own (a profile's own list, even [], replaces it).
 DEFAULTS_FORBIDDEN = (LOCAL_ONLY - {"agents_may_use"}) | {"level", "confirm"}
 ANY = "*"          # agents_may_use: every profile (still same level or lower, no confirm)
-UNION = {("permissions", "ask"), ("permissions", "deny"), ("inherit",), ("unset",)}
-STICKY = {("permissions", "ask"), ("permissions", "deny"), ("unset",)}
+# claude.settings.permissions.deny/ask are rules like permissions.deny/ask, so
+# they combine the same way; claude.settings.permissions.allow is a plain list
+# (a later layer replaces it), so composing never grants more than a layer says.
+CS_PERMS = ("claude", "settings", "permissions")
+STICKY = {("permissions", "ask"), ("permissions", "deny"), ("unset",),
+          CS_PERMS + ("ask",), CS_PERMS + ("deny",)}
+UNION = STICKY | {("inherit",)}
 MAX_DEPTH = 8
 
 # v1 front end (SPEC 2.4)
@@ -1103,8 +1108,8 @@ def merge(dst, src, layer, prov, path=()):
                 prov.pop(p, None)
             merge(dst[k], v, layer, prov, p)
         elif p in UNION:
-            cur = list(old or [])
-            dst[k] = cur + [x for x in v if x not in cur]
+            cur = as_list(old)
+            dst[k] = cur + [x for x in as_list(v) if x not in cur]
             note(prov, p, layer, dst[k], old)
         else:
             dst[k] = copy.deepcopy(v)
@@ -1189,7 +1194,11 @@ def check_selectors(prof):
 
 
 def hit(cwd, pat):
-    return cwd == pat or cwd.startswith(pat.rstrip("/") + "/") or fnmatch.fnmatch(cwd, pat)
+    """cwd is pat, below pat, matches pat as a glob, or is below a directory
+    that does (`~/code/*/infra` covers `~/code/a/infra/modules`)."""
+    base = pat.rstrip("/")
+    return (cwd == pat or cwd.startswith(base + "/") or fnmatch.fnmatch(cwd, pat)
+            or (has_glob(pat) and fnmatch.fnmatch(cwd, base + "/*")))
 
 
 def match_dir(cfg, cwd, fold=False):
@@ -1244,9 +1253,26 @@ def resolve(name=None, cwd=None, cfg=None):
         die(str(e), e.code)
 
 
+def suggest_match(path):
+    """The pattern the no-match hint offers: the top of path's git repository
+    when that is below HOME, else path. It walks path's own spelling (not
+    git's resolved one), so the pattern also matches under a symlink."""
+    home, d = str(HOME).rstrip("/"), path
+    while d.startswith(home + "/"):
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        d = os.path.dirname(d)
+    return path
+
+
+def no_match_text(cfg, path):
+    return (f"no profile matches {tilde(path)} (known: {', '.join(cfg.profiles) or '(none)'}); "
+            f"add `match: [{json.dumps(tilde(suggest_match(path)))}]` to a profile "
+            "(it covers subdirectories too), or set `fallback: <profile>`")
+
+
 def no_match(cfg, path):
-    die(f"no profile matches {path} (known: {', '.join(cfg.profiles) or '(none)'}); "
-        "add `match: [~/code/x/**]` to a profile, or `fallback: <profile>`")
+    die(no_match_text(cfg, path))
 
 
 def all_profiles(cfg, check=False, names=None):
@@ -2716,8 +2742,10 @@ def cmd_status(a):
         target, chosen = sess, "session"
     elif cwd_name:
         target, chosen = cwd_name, how
-    else:
+    elif a.why or a.probe:               # they need a profile
         no_match(cfg, path)
+    else:
+        return status_none(cfg, path, w, sess, source, a.json)
     prof = resolve(target, cfg=cfg)
     off_aside(move=False)            # status never mutates; it only warns (F2)
     d = {"ok": True, "warnings": WARNINGS,
@@ -2779,6 +2807,32 @@ def cmd_status(a):
         row("rules", f"{len(pol['deny'])} deny, {len(pol['ask'])} ask"
                      + ("" if pol["builtin"] else " (built-in preset off)") + f"; gemini {pol['gemini']}")
     status_expired(prof, expired)
+
+
+def status_none(cfg, path, w, sess, source, as_json):
+    """status where no profile applies (no name, no session, no match, no
+    fallback): report that, with the hint, and exit 0 - it is an answer."""
+    off_aside(move=False)
+    hint = no_match_text(cfg, path)
+    d = {"ok": True, "warnings": WARNINGS,
+         "session": {"profile": sess, "source": source,
+                     "record_pid": w["record"]["pid"] if w["record"] else None},
+         "cwd": {"path": tilde(path), "profile": None, "matched_by": None, "pattern": None},
+         "mismatch": False, "profile": None, "matched_by": None, "level": None,
+         "confirm": None, "tool": None, "agents_may_use": [], "identities": {},
+         "agent": {"detected": w["agent"], "signals": w["signals"]}, "surface": surface(w),
+         "hint": hint}
+    if as_json:
+        print(json.dumps(d, indent=2))
+        return
+    row = lambda label, text: print(f"{paint(format(label, '<9'), 'bold')} {text}")  # noqa: E731
+    row("profile", "(none): no profile applies here")
+    row("cwd", f"{d['cwd']['path']} -> (no match)")
+    row("", hint)
+    if sess:
+        row("session", f"{sess} ({source}" + (f" pid {w['record']['pid']})" if w["record"] else ")"))
+    if w["agent"]:
+        row("agent", ", ".join(w["signals"]))
 
 
 def status_expired(prof, expired):
