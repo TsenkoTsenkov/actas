@@ -364,7 +364,7 @@ With `--json`, the refusal is also printed on stdout:
 | Exit | Meaning |
 |---|---|
 | 0 | ok |
-| 1 | error (including a missing secret or a declined confirmation) |
+| 1 | error (including a missing secret, a declined confirmation, or a file actas cannot read or write; `ACTAS_DEBUG=1` shows the Python traceback instead) |
 | 2 | usage |
 | 3 | needs the user (`actas-stop: code=needs_user`) |
 | 4 | credentials expired, login needed (`actas-stop: code=expired`); from `status --probe`, `login` and `aws-handoff` |

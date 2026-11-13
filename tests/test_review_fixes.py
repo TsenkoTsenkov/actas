@@ -804,7 +804,7 @@ class Simplify(Sandbox):
         r = self.cli("secret", "p", "nope")
         self.assertEqual((r.returncode, r.stdout), (1, ""))
         self.assertIn("could not read secret p.nope", r.stderr)
-        self.assertNotIn("(run:", r.stderr)                    # the v1 form keeps its message
+        self.assertIn("(run: actas secret p nope --set)", r.stderr)   # same message, plus the fix-it hint
         r = self.cli("secret", "bad name", "k")
         self.assertIn("invalid environment name 'bad name'", r.stderr)
         r = self.cli("secret", "--ref", "sops:p/k", "p")

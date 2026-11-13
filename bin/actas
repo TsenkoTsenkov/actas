@@ -2970,11 +2970,14 @@ def cmd_secret(a):
         audit("secret-set", refs=[f"sops:{a.env}/{a.key}"])
         info(f"stored {a.env}.{a.key} in {SECRETS}")
         return
-    # A read; the --ref helper form never loads the manifest and prints nothing on failure.
+    # A read; neither form loads the manifest. ENV KEY (the v1 form) is
+    # sops:ENV/KEY: its names are checked first for the clearer message.
+    if a.ref is None:
+        secret_path(a.env, a.key)
     ref = a.ref if a.ref is not None else f"sops:{a.env}/{a.key}"
     if who()["agent"]:
         audit("secret-read", refs=[ref])
-    val, err, hint = read_ref(ref) if a.ref is not None else sops_extract(a.env, a.key) + (None,)
+    val, err, hint = read_ref(ref)
     if val is None:
         die(err + (f" ({hint})" if hint else ""))
     sys.stdout.write(val)
@@ -3316,7 +3319,11 @@ def sync_write(f, prof, new, ledger, a, git_root):
     if a.dry_run:
         print(f"would write {f}  ({prof['name']}): {key_diff(before, data)}")
         return True
-    write_private(f, json.dumps(data, indent=2) + "\n")
+    try:
+        write_private(f, json.dumps(data, indent=2) + "\n")
+    except OSError as e:     # a read-only repo: skip it, keep going (the ledger is still saved)
+        warn(f"skip {f}: cannot write it ({e.strerror or e})")
+        return False
     ledger[str(f)] = dict({"profile": prof["name"], "version": 2,
                            "written": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, **own,
                           helpers=helper_paths(new))
@@ -3363,10 +3370,15 @@ def sync_clean(f, ledger, a):
         if a.dry_run:
             print(f"would clean {f}  ({verb})")
             return True
-        if data:
-            write_private(f, json.dumps(data, indent=2) + "\n")
-        else:
-            f.unlink()
+        try:
+            if data:
+                write_private(f, json.dumps(data, indent=2) + "\n")
+            else:
+                f.unlink()
+        except OSError as e:    # its ledger entry stays, so a later --clean retries
+            warn(f"skip {f}: cannot clean it ({e.strerror or e})")
+            return False
+        if not data:
             with suppress(OSError):
                 f.parent.rmdir()
         print(f"{paint('clean', 'green')} {f}  ({verb})")
@@ -3429,75 +3441,87 @@ def cmd_sync(a):
     ledger = load_ledger()
     before, failed, done, broken = copy.deepcopy(ledger), False, set(), set()
     off_aside(move=not a.dry_run)    # synced files point at the `_off` homes too (F2)
-    for name in [a.env] if a.env else list(cfg.profiles):
-        try:
-            prof = merge_profile(name, cfg)
-        except ManifestError as e:
-            warn(f"skip {name}: {e}")
-            failed = True
-            broken.add(name)         # its files are not orphans: --clean keeps them (R2)
-            continue
-        dirs, new = sync_dirs(prof), None
-        held = prof["confirm"] and not a.include_confirm
-        if held and dirs:
-            info(f"skip {', '.join(tilde(d) for d in dirs)}: {name} requires confirmation; "
-                 "use actas run (or sync --include-confirm)")
-        for d in dirs:             # grows: the child repos of a plain folder (F18)
-            got = locate(cfg, d)[0]
-            if got != name:
-                if not held:
-                    info(f"skip {tilde(d)}: resolves to {got or 'no profile'}")
+    try:
+        for name in [a.env] if a.env else list(cfg.profiles):
+            try:
+                prof = merge_profile(name, cfg)
+            except ManifestError as e:
+                warn(f"skip {name}: {e}")
+                failed = True
+                broken.add(name)         # its files are not orphans: --clean keeps them (R2)
                 continue
-            root, in_git = claude_root(d)
-            if not in_git:
-                dirs += [c for c in child_repos(d) if c not in dirs and locate(cfg, c)[0] == name]
-            owner = name if root == d else locate(cfg, root)[0]
-            # The root's file, and d's own when d is a worktree or a nested
-            # profile's directory (F15): only a file actas wrote there earlier
-            # (v1 wrote such dirs), kept current rather than left stale (D-E).
-            cands = [f for f in [settings_file(x) for x in ([root] if owner == name else [])
-                                 + ([d] if root != d else [])] if str(f) not in done]
-            done.update(str(f) for f in cands)       # still targets: --clean never removes them
-            if held:
+            dirs, new = sync_dirs(prof), None
+            held = prof["confirm"] and not a.include_confirm
+            if held and dirs:
+                info(f"skip {', '.join(tilde(d) for d in dirs)}: {name} requires confirmation; "
+                     "use actas run (or sync --include-confirm)")
+            for d in dirs:             # grows: the child repos of a plain folder (F18)
+                got = locate(cfg, d)[0]
+                if got != name:
+                    if not held:
+                        info(f"skip {tilde(d)}: resolves to {got or 'no profile'}")
+                    continue
+                root, in_git = claude_root(d)
+                if not in_git:
+                    dirs += [c for c in child_repos(d) if c not in dirs and locate(cfg, c)[0] == name]
+                owner = name if root == d else locate(cfg, root)[0]
+                # The root's file, and d's own when d is a worktree or a nested
+                # profile's directory (F15): only a file actas wrote there earlier
+                # (v1 wrote such dirs), kept current rather than left stale (D-E).
+                cands = [f for f in [settings_file(x) for x in ([root] if owner == name else [])
+                                     + ([d] if root != d else [])] if str(f) not in done]
+                done.update(str(f) for f in cands)       # still targets: --clean never removes them
+                if held:
+                    continue
+                files = []
+                for f in cands:
+                    if f != settings_file(root):
+                        data = read_settings(f) if os.path.lexists(str(f)) else None
+                        if data is None or not owned_by(f, data, ledger, prof):
+                            continue
+                        info(f"updating {f}: actas wrote it earlier and Claude may still read keys the repo "
+                             "root does not set" + ("" if owner == name else
+                                                    f" (the root {tilde(root)} is {owner or 'no profile'}; "
+                                                    "use `actas run` here)"))
+                    files.append(f)
+                if owner != name and cands and not files:
+                    warn(f"skip {tilde(d)}: Claude reads settings.local.json at the repo root "
+                         f"{tilde(root)} (profile {owner or 'none'}); use `actas run` here")
+                for f in files:
+                    new = new or settings_for(prof, assemble(prof, want_secrets=False, git_base=0,
+                                                             ctx={"agent": True}), "sync")
+                    failed |= not sync_write(f, prof, new, ledger, a, f.parent.parent if in_git else None)
+            if new is not None and not a.dry_run:
+                try:
+                    write_context(cfg, prof)
+                except OSError as e:
+                    warn(f"could not write {name}'s session note in {tilde(CACHE)} ({e.strerror or e})")
+                    failed = True
+        exposed = global_routing()
+        for f, e in list(ledger.items()):
+            owner = e.get("profile") if isinstance(e, dict) else None
+            if f in done or owner in broken or (a.env and owner != a.env):
                 continue
-            files = []
-            for f in cands:
-                if f != settings_file(root):
-                    data = read_settings(f) if os.path.lexists(str(f)) else None
-                    if data is None or not owned_by(f, data, ledger, prof):
-                        continue
-                    info(f"updating {f}: actas wrote it earlier and Claude may still read keys the repo "
-                         "root does not set" + ("" if owner == name else
-                                                f" (the root {tilde(root)} is {owner or 'no profile'}; "
-                                                "use `actas run` here)"))
-                files.append(f)
-            if owner != name and cands and not files:
-                warn(f"skip {tilde(d)}: Claude reads settings.local.json at the repo root "
-                     f"{tilde(root)} (profile {owner or 'none'}); use `actas run` here")
-            for f in files:
-                new = new or settings_for(prof, assemble(prof, want_secrets=False, git_base=0,
-                                                         ctx={"agent": True}), "sync")
-                failed |= not sync_write(f, prof, new, ledger, a, f.parent.parent if in_git else None)
-        if new is not None and not a.dry_run:
-            write_context(cfg, prof)
-    exposed = global_routing()
-    for f, e in list(ledger.items()):
-        owner = e.get("profile") if isinstance(e, dict) else None
-        if f in done or owner in broken or (a.env and owner != a.env):
-            continue
-        if not a.clean:
-            info(f"stale {f} ({owner or '?'}): no profile syncs it any more; "
-                 "`actas sync --clean` removes what actas wrote there")
-            continue
-        own = owns_routing(e, exposed)
-        if own and not a.force:
-            warn(f"keep {f}: removing it lets ~/.claude/settings.json's {', '.join(own)} apply in "
-                 f"{tilde(Path(f).parent.parent)}; `actas sync --clean --force` removes it anyway")
-            continue
-        failed |= not sync_clean(Path(f), ledger, a)
-    if ledger != before and not a.dry_run:
-        ensure_dir(STATE, tighten=True)
-        write_private(LEDGER, json.dumps(ledger, indent=2, sort_keys=True) + "\n")
+            if not a.clean:
+                info(f"stale {f} ({owner or '?'}): no profile syncs it any more; "
+                     "`actas sync --clean` removes what actas wrote there")
+                continue
+            own = owns_routing(e, exposed)
+            if own and not a.force:
+                warn(f"keep {f}: removing it lets ~/.claude/settings.json's {', '.join(own)} apply in "
+                     f"{tilde(Path(f).parent.parent)}; `actas sync --clean --force` removes it anyway")
+                continue
+            failed |= not sync_clean(Path(f), ledger, a)
+    finally:
+        # Saved even when a later repo fails: files already written stay
+        # ledgered, so sync and --clean can still find what actas owns there.
+        if ledger != before and not a.dry_run:
+            try:
+                ensure_dir(STATE, tighten=True)
+                write_private(LEDGER, json.dumps(ledger, indent=2, sort_keys=True) + "\n")
+            except OSError as e:
+                warn(f"could not save {tilde(LEDGER)} ({e.strerror or e})")
+                failed = True
     if not a.dry_run:
         audit("sync", a.env, "allowed", reason="clean" if a.clean else None)
     if failed:
@@ -3634,6 +3658,8 @@ def cmd_aws_handoff(a):
         c = json.loads(r.stdout)
     except ValueError:
         die("export-credentials printed no JSON")
+    if not (isinstance(c, dict) and c.get("AccessKeyId") and c.get("SecretAccessKey")):
+        die("export-credentials printed no usable credentials")
 
     # Anything pasted into a chat lands in the session transcript, so never
     # hand over a long-lived access key. SSO profiles are already temporary;
@@ -3647,9 +3673,13 @@ def cmd_aws_handoff(a):
         if t.returncode != 0:
             die("profile has long-lived credentials and get-session-token "
                 f"failed, refusing to hand them over: {t.stderr.strip()}")
-        cr = json.loads(t.stdout)["Credentials"]
-        c = {"AccessKeyId": cr["AccessKeyId"], "SecretAccessKey": cr["SecretAccessKey"],
-             "SessionToken": cr["SessionToken"], "Expiration": str(cr["Expiration"])}
+        try:
+            cr = json.loads(t.stdout)["Credentials"]
+            c = {"AccessKeyId": cr["AccessKeyId"], "SecretAccessKey": cr["SecretAccessKey"],
+                 "SessionToken": cr["SessionToken"], "Expiration": str(cr["Expiration"])}
+        except (ValueError, KeyError, TypeError):
+            die("get-session-token printed no usable credentials; refusing to hand over "
+                "the long-lived ones")
 
     block = (
         "Set up AWS credentials for this session by running exactly this, "
@@ -4338,12 +4368,36 @@ def main(argv=None):
         _main(argv)
     except KeyboardInterrupt:
         sys.exit(130)
+    except BrokenPipeError:
+        # The reader went away (`actas list | head`): nothing left to tell it.
+        with suppress(OSError):
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(1)
+    except OSError as e:
+        # Last resort for a file actas cannot read or write (a read-only
+        # repo, an unwritable cache): one `actas:` line, exit 1, no traceback.
+        if env_get("ACTAS_DEBUG") == "1":
+            raise
+        where = f"{tilde(e.filename)}: " if e.filename else ""
+        die(f"{where}{e.strerror or e} (ACTAS_DEBUG=1 shows the traceback)")
+
+
+def reset_state():
+    """Per-invocation state, cleared at the start of every _main() so an
+    in-process caller (tests, the packaged entry point) never sees the last
+    run's warnings, held lines, decrypted secrets or process table. _LOADED
+    stays: it is keyed by the manifest's path, mtime and size."""
+    _CACHE.clear()
+    _SOPS.clear()
+    del WARNINGS[:]
+    del HELD[:]
+    _MODE.update(json=False, no_color=False, hold=False, argv=[])
 
 
 def _main(argv=None):
+    reset_state()
     p, sub = build_parser()
     argv = sys.argv[1:] if argv is None else list(argv)
-    _CACHE.clear()
     _MODE["argv"] = list(argv)
     passthrough, dashdash = [], "--" in argv
     if dashdash:

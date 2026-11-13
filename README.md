@@ -512,7 +512,9 @@ the launched tool: `actas run client-a -- --resume`.
 
 Exit codes: `0` ok, `1` error, `2` usage, `3` needs the user (an `actas-stop:`
 refusal), `4` credentials expired. Apart from these, `exec` and `run` return
-the tool's own exit code.
+the tool's own exit code. A file actas cannot read or write (a read-only repo,
+an unwritable cache) ends in one `actas:` line naming it, with exit `1`;
+`ACTAS_DEBUG=1` shows the Python traceback instead.
 
 ## Documentation
 

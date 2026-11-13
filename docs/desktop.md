@@ -130,6 +130,10 @@ How sync decides where to write:
   would let `~/.claude/settings.json`'s `apiKeyHelper` or
   `env.ANTHROPIC_BASE_URL` apply in that repo, and says so; `--force` removes
   it anyway.
+- **One unwritable repo does not stop the rest:** sync warns `skip <file>:
+  cannot write it`, writes and ledgers the other repos, and exits 1. A file
+  `--clean` cannot change keeps its ledger entry, so the next `--clean`
+  retries it.
 - **Symlinks are refused:** if `.claude` or `.claude/settings.local.json` is a
   symlink (a cloned repo can commit one), sync skips it without reading or
   replacing it.
