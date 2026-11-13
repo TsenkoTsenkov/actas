@@ -2712,6 +2712,10 @@ def list_row(name, prof):
 
 def cmd_list(a):
     cfg = load()
+    if a.names:                      # for scripts and shell completion: nothing merged or probed
+        for name in sorted(cfg.profiles):
+            print(name)
+        return
     rows, (profs, errors) = [], all_profiles(cfg, names=sorted(cfg.profiles))
     for name, e in errors.items():
         warn(f"profile {name}: {e}")
@@ -2745,9 +2749,16 @@ def cmd_list(a):
     if not rows:
         print("no profiles defined")
         return
+    try:
+        here = locate(cfg, a.cwd)[0]
+    except OSError:                  # a deleted working directory
+        here = None
+    session = session_of(cfg)[0]
     for r in rows:
         remote = "yes" if r["remote_control"] else paint(f"no ({r['provider']})", "dim")
-        line = (f"{paint(format(r['name'], '<20'), 'bold')} provider={r['provider']:<13} "
+        mark = ("*" if r["name"] == here else "") + ("+" if r["name"] == session else "")
+        line = (f"{paint(format(r['name'] + (' ' + mark if mark else ''), '<20'), 'bold')} "
+                f"provider={r['provider']:<13} "
                 f"aws={r['aws'] or '-':<22} gh={r['github'] or '-':<22} remote={remote}")
         if cfg.version == 2:
             line += f" level={r['level']}" + (" confirm" if r["confirm"] else "")
@@ -2758,6 +2769,9 @@ def cmd_list(a):
             if "secret" in ck:
                 line += f" secret={paint(ck['secret'], 'green' if ck['secret'] == 'ok' else 'red')}"
         print(line)
+    legend = [x for x, on in (("* this directory", here in profs), ("+ this session", session in profs)) if on]
+    if legend:
+        print(paint(", ".join(legend), "dim"))
     if cfg.roles:
         print(f"roles: {', '.join(sorted(cfg.roles))}")
 
@@ -4183,7 +4197,7 @@ def cmd_migrate(a):
 
 HIDDEN = {"git-credential", "hook"}
 EVERYDAY = ("init", "run", "exec", "status", "list", "login", "sync", "doctor")   # SPEC 0.1.3
-ADVANCED = ("shell", "secret", "desktop", "instructions", "migrate", "aws-handoff")
+ADVANCED = ("shell", "secret", "desktop", "instructions", "migrate", "aws-handoff", "completion")
 DOCS = "https://github.com/TsenkoTsenkov/actas/blob/main/docs/"
 HELP_TOPICS = {
     "manifest": f"""The manifest: {MANIFEST}  (full reference: {DOCS}manifest.md)
@@ -4219,18 +4233,66 @@ Credentials are the boundary; these rules are a seatbelt. More: {DOCS}agents.md
 
 
 class Parser(argparse.ArgumentParser):
-    """On any usage error, show the full help menu instead of a one-line
-    usage string, plus a hint for the most common mistakes."""
+    """Usage errors exit 2. At the top level (an unknown command) they show
+    the full help menu; inside a known command, only that command's usage
+    line and one hint (a did-you-mean, where `--` goes, or `actas help <cmd>`)."""
+    cmd = None      # the subcommand a sub-parser handles; None at the top level
 
-    def error(self, message):
-        self.print_help(sys.stderr)
-        hint = ""
-        if "unrecognized arguments" in message:
-            hint = ("\n       put the command after --  (actas exec <profile> -- aws s3 ls)"
-                    if _MODE["argv"] and first_word(_MODE["argv"]) == "exec" else
-                    "\n       to pass arguments to claude, put them after --  (actas run <env> -- --resume)")
-        print(f"\n{paint('actas: error:', 'red', sys.stderr)} {message}{hint}", file=sys.stderr)
+    def error(self, message, hint=None, full=None):
+        if full is None:
+            full = self.cmd is None
+        if full:
+            self.print_help(sys.stderr)
+            print(file=sys.stderr)
+        elif self.cmd:
+            sys.stderr.write(self.format_usage())
+        if hint is None and self.cmd and self.cmd not in HIDDEN:
+            hint = f"more: actas help {self.cmd}"
+        print(f"{paint('actas: error:', 'red', sys.stderr)} {message}"
+              + (f"\n       {hint}" if hint else ""), file=sys.stderr)
         sys.exit(2)
+
+
+def unknown_hint(sp, extra):
+    """The one hint for arguments a known command does not take."""
+    flag = next((x.split("=", 1)[0] for x in extra if x.startswith("-")), None)
+    if flag:
+        opts = [o for act in sp._actions if act.help != argparse.SUPPRESS
+                for o in act.option_strings if o.startswith("--")]
+        # run and exec: a stray flag is usually meant for the tool, so only a near miss counts
+        close = difflib.get_close_matches(flag, opts, n=1, cutoff=0.8 if sp.cmd in ("run", "exec") else 0.75)
+        if close:
+            return f"did you mean: {close[0]}?"
+    if sp.cmd == "exec":
+        return "put the command after --  (actas exec <profile> -- aws s3 ls)"
+    if sp.cmd == "run":
+        return "arguments for the tool go after --  (actas run <profile> -- --resume)"
+    return None
+
+
+def manifest_names():
+    """Profile names for a usage hint: never dies, warns, or leaves a
+    half-validated manifest in the load cache."""
+    try:
+        return sorted(load(strict=False, quiet=True).profiles) if MANIFEST.exists() else []
+    except (Exception, SystemExit):
+        return []
+    finally:
+        _LOADED.clear()
+
+
+def profile_word(p, argv, word, passthrough, dashdash):
+    """`actas <profile> -- cmd` is `actas exec <profile> -- cmd` for a person.
+    Inside an agent session it is a usage error pointing to exec, so an
+    agent's switch is always spelled `actas exec` (the Switch ask rule)."""
+    if dashdash and passthrough and not who()["agent"]:
+        i = first_index(argv)
+        return argv[:i] + ["exec"] + argv[i:]
+    rest = shlex.join(passthrough) if passthrough else "<command>"
+    p.error(f"{word!r} is a profile, not a command",
+            f"did you mean: actas exec {word} -- {rest}"
+            + ("  (agent sessions spell out exec)" if passthrough else f"  (or: actas run {word})"),
+            full=False)
 
 
 def short_help(sub):
@@ -4262,6 +4324,7 @@ def command_reference(sub):
         "  actas run                     launch claude in the profile matching the cwd",
         "  actas run work -- --resume    pass arguments to claude after --",
         "  actas exec work -- aws s3 ls  run any command as profile work",
+        "  actas work -- aws s3 ls       the same, shorter (not inside an agent session)",
         "  eval \"$(actas shell)\"        apply the profile to this shell",
         "  actas run --login             also refresh AWS SSO before starting",
         "  actas status --why            which profile applies here, and why",
@@ -4269,18 +4332,293 @@ def command_reference(sub):
         "  actas --cwd ~/code/x shell    print the env vars for another directory",
         "  actas list --check            show profiles and auth status",
         "  actas help <command>          detailed help for one command",
+        "  eval \"$(actas completion zsh)\" tab completion (bash, zsh, fish)",
     ]
     return "\n".join(lines)
 
 
-def first_word(argv):
-    """The subcommand token, skipping global options."""
+def completion_spec(sub):
+    """Each public command as (names, help, options, positional), read from
+    the parser. An option is (flags, help, value, repeatable) with value None
+    (a switch), a tuple of choices, "dir" or "" (free text); positional is
+    "profile", a tuple of words, or None."""
+    helps = {a.dest: a.help for a in sub._choices_actions}
+    spec, seen = [], {}
+    for name, sp in sub.choices.items():
+        if name in HIDDEN:
+            continue
+        if id(sp) in seen:                    # an alias (whoami)
+            seen[id(sp)][0].append(name)
+            continue
+        opts, pos = [], None
+        for act in sp._actions:
+            if act.help == argparse.SUPPRESS:
+                continue
+            if act.option_strings:
+                value = (None if act.nargs == 0 else tuple(act.choices) if act.choices
+                         else "dir" if act.dest == "cwd" else "")
+                opts.append((act.option_strings, act.help or "", value, isinstance(act, argparse._AppendAction)))
+            elif pos is None:
+                pos = ("profile" if act.metavar == "profile" else tuple(act.choices) if act.choices else None)
+        if name == "help":
+            pos = tuple(c for c in sub.choices if c not in HIDDEN) + tuple(HELP_TOPICS)
+        seen[id(sp)] = ([name], helps.get(name) or "", opts, pos)
+        spec.append(seen[id(sp)])
+    return spec
+
+
+TOP_OPTS = [(["--cwd"], "resolve the profile as if from this directory", "dir", False),
+            (["--no-color"], "no ANSI colours", None, False),
+            (["--version"], "show the version", None, False),
+            (["-h", "--help"], "show help", None, False)]
+
+
+def completion_script(sub, shell):
+    """`actas completion bash|zsh|fish`: profile names come from
+    `actas list --names` at completion time, so nothing goes stale."""
+    spec = completion_spec(sub)
+    value_opts = sorted({f for _, _, opts, _ in spec for fl, _, v, _ in opts if v is not None for f in fl})
+    return {"bash": bash_completion, "zsh": zsh_completion, "fish": fish_completion}[shell](spec, value_opts)
+
+
+def bash_completion(spec, value_opts):
+    cases = []
+    for names, _, opts, pos in spec:
+        body = [f"opts='{' '.join(f for fl, _, _, _ in opts for f in fl)}'"]
+        body += [f"case $prev in {'|'.join(fl)}) COMPREPLY=($(compgen -W '{' '.join(v)}' -- \"$cur\")); "
+                 "return 0 ;; esac" for fl, _, v, _ in opts if isinstance(v, tuple)]
+        body += ["prof=1"] if pos == "profile" else [f"words='{' '.join(pos)}'"] if pos else []
+        cases.append(f"        {'|'.join(names)})\n" + "\n".join(f"            {b}" for b in body) + " ;;")
+    commands = " ".join(n for names, _, _, _ in spec for n in names)
+    return f"""\
+# actas completion for bash: add  eval "$(actas completion bash)"  to ~/.bashrc
+_actas() {{
+    local cur=${{COMP_WORDS[COMP_CWORD]}} prev=${{COMP_WORDS[COMP_CWORD-1]}}
+    local i w cmd= npos=0 skip=0 opts= words= prof=0
+    COMPREPLY=()
+    for ((i = 1; i < COMP_CWORD; i++)); do
+        w=${{COMP_WORDS[i]}}
+        if ((skip)); then skip=0; continue; fi
+        case $w in
+            --) if ((i == COMP_CWORD - 1)); then COMPREPLY=($(compgen -c -- "$cur")); fi
+                return 0 ;;
+            {'|'.join(value_opts)}) skip=1 ;;
+            -*) ;;
+            *) if [[ -z $cmd ]]; then cmd=$w; else npos=$((npos + 1)); fi ;;
+        esac
+    done
+    case $cmd in
+        '') opts='{' '.join(f for fl, _, _, _ in TOP_OPTS for f in fl)}'; words='{commands}' ;;
+{chr(10).join(cases)}
+        *) return 0 ;;
+    esac
+    case $prev in
+        --cwd) COMPREPLY=($(compgen -d -- "$cur")); return 0 ;;
+        {'|'.join(value_opts)}) return 0 ;;
+    esac
+    if [[ $cur == -* ]]; then
+        COMPREPLY=($(compgen -W "$opts" -- "$cur"))
+    elif ((npos == 0)); then
+        if ((prof)); then words=$("${{COMP_WORDS[0]}}" list --names 2>/dev/null); fi
+        COMPREPLY=($(compgen -W "$words" -- "$cur"))
+    fi
+    return 0
+}}
+complete -o default -F _actas actas
+"""
+
+
+def zsh_quote(s):
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def zsh_option(flags, text, value, repeat):
+    desc = text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]").replace(":", "\\:")
+    arg = ("" if value is None else f":{flags[-1].lstrip('-')}:({' '.join(value)})" if isinstance(value, tuple)
+           else ":directory:_files -/" if value == "dir" else ":value: ")
+    rest = f"[{desc}]{arg}"
+    star = "*" if repeat else ""
+    if len(flags) == 1:
+        return zsh_quote(f"{star}{flags[0]}{rest}")
+    return zsh_quote(f"{star}({' '.join(flags)})") + "{" + ",".join(flags) + "}" + zsh_quote(rest)
+
+
+def zsh_completion(spec, value_opts):
+    commands = [zsh_quote(f"{n}:{text}") for names, text, _, _ in spec for n in names]
+    cases = []
+    for names, _, opts, pos in spec:
+        args = [zsh_option(*o) for o in opts]
+        if pos == "profile":
+            args.append(zsh_quote("1:profile:_actas_profiles"))
+        elif pos:
+            args.append(zsh_quote(f"1:word:({' '.join(pos)})"))
+        cases.append(f"        ({'|'.join(names)})\n          _arguments \\\n"
+                     + " \\\n".join(f"            {x}" for x in args) + " && ret=0 ;;")
+    top = " \\\n".join(f"    {zsh_option(*o)}" for o in TOP_OPTS)
+    return f"""\
+#compdef actas
+# actas completion for zsh: add  eval "$(actas completion zsh)"  to ~/.zshrc, after compinit
+# (or save the output as _actas in a directory on $fpath).
+_actas_profiles() {{
+  local -a profiles
+  profiles=(${{(f)"$(_call_program profiles ${{(q)_actas_bin}} list --names 2>/dev/null)"}})
+  _describe -t profiles profile profiles
+}}
+
+_actas() {{
+  local _actas_bin=${{words[1]}} curcontext=$curcontext state state_descr line ret=1 i
+  typeset -A opt_args
+  local -a commands
+  commands=(
+{chr(10).join(f"    {c}" for c in commands)}
+  )
+  _arguments -C \\
+{top} \\
+    '1: :->command' \\
+    '*:: :->args' && ret=0
+  case $state in
+    (command) _describe -t commands 'actas command' commands && ret=0 ;;
+    (args)
+      for (( i = 2; i < CURRENT; i++ )); do
+        if [[ ${{words[i]}} == -- ]]; then
+          shift $i words
+          (( CURRENT -= i ))
+          _normal && ret=0
+          return ret
+        fi
+      done
+      curcontext=${{curcontext%:*:*}}:actas-${{words[1]}}:
+      case ${{words[1]}} in
+{chr(10).join(cases)}
+      esac ;;
+  esac
+  return ret
+}}
+
+if [[ ${{funcstack[1]}} == _actas ]]; then _actas "$@"; else compdef _actas actas; fi
+"""
+
+
+def fish_completion(spec, value_opts):
+    lines = []
+    for flags, text, value, _ in TOP_OPTS:
+        lines.append(fish_line("__actas_using -", flags, text, value))
+    for names, text, _, _ in spec:
+        lines += [f"complete -c actas -n '__actas_using -' -a {n} -d {fish_quote(text)}" for n in names]
+    for names, _, opts, pos in spec:
+        using = "__actas_using " + " ".join(names)
+        lines += [fish_line(using, *o[:3]) for o in opts]
+        if pos == "profile":
+            lines.append(f"complete -c actas -n '__actas_slot {' '.join(names)}' -a '(__actas_profiles)'")
+        elif pos:
+            lines.append(f"complete -c actas -n '__actas_slot {' '.join(names)}' -a {fish_quote(' '.join(pos))}")
+    return f"""\
+# actas completion for fish:
+#   actas completion fish > ~/.config/fish/completions/actas.fish
+function __actas_state --description 'actas: the command (- for none) and its positional count'
+    set -l cmd -
+    set -l npos 0
+    set -l skip 0
+    set -l first 1
+    for t in (commandline -opc)
+        if test $first = 1
+            set first 0
+        else if test $skip = 1
+            set skip 0
+        else
+            switch $t
+                case --
+                    return 1
+                case {' '.join(value_opts)}
+                    set skip 1
+                case '-*'
+                case '*'
+                    if test "$cmd" = -
+                        set cmd $t
+                    else
+                        set npos (math $npos + 1)
+                    end
+            end
+        end
+    end
+    echo $cmd
+    echo $npos
+end
+
+function __actas_using --description 'actas: the command is one of these (- for none yet)'
+    set -l s (__actas_state); or return 1
+    contains -- $s[1] $argv
+end
+
+function __actas_slot --description "actas: completing one of these commands' first positional"
+    set -l s (__actas_state); or return 1
+    contains -- $s[1] $argv; and test $s[2] = 0
+end
+
+function __actas_profiles
+    set -l bin (commandline -opc)
+    $bin[1] list --names 2>/dev/null
+end
+
+function __actas_after_dd
+    contains -- -- (commandline -opc)
+end
+
+function __actas_dd_complete --description 'actas: complete the command after --'
+    set -l rest
+    set -l seen 0
+    for t in (commandline -opc)
+        if test $seen = 1
+            set -a rest $t
+        else if test "$t" = --
+            set seen 1
+        end
+    end
+    complete -C (string join ' ' -- (string escape -- $rest) (commandline -ct))
+end
+
+complete -c actas -f
+complete -c actas -n __actas_after_dd -a '(__actas_dd_complete)'
+{chr(10).join(lines)}
+"""
+
+
+def fish_line(cond, flags, text, value):
+    parts = [f"complete -c actas -n '{cond}'"]
+    parts += [f"-s {f[1:]}" if not f.startswith("--") else f"-l {f[2:]}" for f in flags]
+    if isinstance(value, tuple):
+        parts.append(f"-x -a {fish_quote(' '.join(value))}")
+    elif value == "dir":
+        parts.append("-x -a '(__fish_complete_directories)'")
+    elif value == "":
+        parts.append("-x")
+    return " ".join(parts + [f"-d {fish_quote(text)}"])
+
+
+def first_index(argv):
+    """The subcommand token's index, skipping global options (or None)."""
     i = 0
     while i < len(argv):
         if not argv[i].startswith("-"):
-            return argv[i]
+            return i
         i += 2 if argv[i] == "--cwd" else 1
     return None
+
+
+def first_word(argv):
+    """The subcommand token, skipping global options."""
+    i = first_index(argv)
+    return None if i is None else argv[i]
+
+
+class SubFormatter(argparse.HelpFormatter):
+    """A command's help: the description is wrapped, the examples epilog is
+    printed as written."""
+
+    def _fill_text(self, text, width, indent):
+        if text.startswith("examples:"):
+            return "".join(indent + line for line in text.splitlines(keepends=True))
+        return super()._fill_text(text, width, indent)
 
 
 def build_parser():
@@ -4291,20 +4629,39 @@ def build_parser():
     p.add_argument("--no-color", action="store_true", help="no ANSI colours (also: NO_COLOR=1)")
     sub = p.add_subparsers(dest="cmd", required=True, metavar="<command>")
 
-    # --cwd is accepted after the command too (`actas run --cwd DIR`).
-    # SUPPRESS keeps the subcommand default from clobbering a value given
-    # before the command.
+    # --cwd and --no-color are accepted after the command too (`actas run
+    # --cwd DIR`). SUPPRESS keeps the subcommand default from clobbering a
+    # value given before the command.
     cwd_opt = argparse.ArgumentParser(add_help=False)
     cwd_opt.add_argument("--cwd", default=argparse.SUPPRESS,
                          help="resolve the profile as if from this directory")
+    cwd_opt.add_argument("--no-color", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     _add = sub.add_parser
-    sub.add_parser = lambda *x, **k: _add(*x, parents=[cwd_opt], **k)
 
-    i = sub.add_parser("init", help="create the config directory and a starter manifest")
+    def add_parser(name, examples=(), **k):
+        """A command: its help shows a description and a few examples."""
+        sp = _add(name, parents=[cwd_opt], formatter_class=SubFormatter,
+                  epilog=("examples:\n" + "\n".join(f"  {e}" for e in examples)) if examples else None, **k)
+        sp.cmd = name
+        return sp
+    sub.add_parser = add_parser
+    by_cwd = "profile name (default: the one matching the cwd)"
+    by_session = "profile name (default: an agent's session profile, else the one matching the cwd)"
+
+    i = sub.add_parser("init", help="create the config directory and a starter manifest",
+                       description=f"Create the config directory ({tilde(ROOT)}) with a starter manifest. "
+                                   "Never overwrites an existing manifest.",
+                       examples=("actas init", "actas doctor                  check what init wrote"))
     i.set_defaults(fn=cmd_init)
 
-    r = sub.add_parser("run", help="launch Claude Code (or the profile's tool) in a profile")
-    r.add_argument("env", nargs="?", metavar="profile", help="profile name (default: match cwd)")
+    r = sub.add_parser("run", help="launch Claude Code (or the profile's tool) in a profile",
+                       usage="actas run [profile] [-t TOOL] [--login] [--no-check] [-- tool args...]",
+                       description="Launch Claude Code, or the profile's tool (codex, gemini), with the "
+                                   "profile's identity and agent rules. Arguments after -- go to the tool.",
+                       examples=("actas run                     the profile matching this directory",
+                                 "actas run work -- --resume    pass --resume to claude",
+                                 "actas run work -t codex       launch codex instead"))
+    r.add_argument("env", nargs="?", metavar="profile", help=by_session)
     r.add_argument("-t", "--tool", choices=TOOL_NAMES, help="launch this tool instead of the profile's")
     r.add_argument("--login", action="store_true",
                    help="refresh this profile's AWS SSO first if expired (default: only warn)")
@@ -4313,33 +4670,57 @@ def build_parser():
     r.set_defaults(fn=cmd_run)
 
     ex = sub.add_parser("exec", help="run any command with a profile's identity: exec [profile] -- cmd",
-                        usage="actas exec [profile] [--reason TEXT] [--json] -- command [args...]")
-    ex.add_argument("env", nargs="?", metavar="profile", help="profile name (default: match cwd)")
+                        usage="actas exec [profile] [--reason TEXT] [--json] -- command [args...]",
+                        description="Run one command with a profile's identity and return its exit code. "
+                                    "In your own terminal, `actas <profile> -- cmd` is short for "
+                                    "`actas exec <profile> -- cmd`.",
+                        examples=("actas exec work -- aws s3 ls",
+                                  "actas work -- terraform plan  the same shorthand",
+                                  'actas exec prod --reason "read the plan" -- terraform show'))
+    ex.add_argument("env", nargs="?", metavar="profile", help=by_session)
     ex.add_argument("--reason", help="why the command needs this profile (shown on a refusal)")
     ex.add_argument("--json", action="store_true", help="machine-readable refusals")
     ex.set_defaults(fn=cmd_exec)
 
-    st = sub.add_parser("status", aliases=["whoami"], help="which profile applies, and what it sets")
-    st.add_argument("env", nargs="?", metavar="profile")
+    st = sub.add_parser("status", aliases=["whoami"], help="which profile applies, and what it sets",
+                        description="Show which profile applies here (the session's, else the one matching "
+                                    "the directory) and what it sets. Never prints secret values.",
+                        examples=("actas status", "actas status work --why       where each value comes from",
+                                  "actas status --json           for scripts and agents"))
+    st.add_argument("env", nargs="?", metavar="profile",
+                    help="profile name (default: this session's, else the one matching the cwd)")
     st.add_argument("--why", action="store_true", help="show the use: chain and where each value comes from")
     st.add_argument("--probe", action="store_true", help="also check each login (aws, gcp, azure, github)")
     st.add_argument("--json", action="store_true", help="machine-readable output")
     st.set_defaults(fn=cmd_status)
 
-    l = sub.add_parser("list", help="list profiles")  # noqa: E741
+    l = sub.add_parser("list", help="list profiles",  # noqa: E741
+                       description="List the profiles, one line each, and the roles. A * after a name "
+                                   "marks the profile matching this directory, a + this session's profile.",
+                       examples=("actas list", "actas list --check            also probe AWS and secrets",
+                                 "actas list --names            one name per line, for scripts"))
     l.add_argument("--check", action="store_true", help="also probe AWS and secret availability")
     l.add_argument("--json", action="store_true", help="machine-readable output")
+    l.add_argument("--names", action="store_true", help="only the profile names, one per line")
     l.set_defaults(fn=cmd_list)
 
-    s = sub.add_parser("shell", help="print the profile's environment (export lines for eval)")
-    s.add_argument("env", nargs="?", metavar="profile")
+    s = sub.add_parser("shell", help="print the profile's environment (export lines for eval)",
+                       description="Print a profile's environment for eval, fish, direnv, JSON or a GUI "
+                                   "app's env setting. With secrets it is human-only.",
+                       examples=('eval "$(actas shell)"', "actas shell work --format fish | source",
+                                 "actas shell --format env --no-secrets"))
+    s.add_argument("env", nargs="?", metavar="profile", help=by_cwd)
     s.add_argument("--format", choices=("sh", "fish", "direnv", "json", "env"), default="sh",
                    help="sh (default), fish, direnv, json, or env (KEY=value, no secrets)")
     s.add_argument("--no-secrets", action="store_true", help="leave secret values out (git helpers stay)")
     s.set_defaults(fn=cmd_shell)
 
-    lo = sub.add_parser("login", help="log in to a profile's accounts (default: AWS SSO, Codex)")
-    lo.add_argument("env", nargs="?", metavar="profile")
+    lo = sub.add_parser("login", help="log in to a profile's accounts (default: AWS SSO, Codex)",
+                        description="Log in to a profile's accounts: AWS SSO by default, plus Codex for "
+                                    "Codex profiles. Human-only.",
+                        examples=("actas login work", "actas login work --module github",
+                                  "actas login --all              one AWS login per SSO portal"))
+    lo.add_argument("env", nargs="?", metavar="profile", help=by_cwd)
     lo.add_argument("--all", action="store_true",
                     help="one AWS login per SSO session or portal used by any profile")
     lo.add_argument("--module", action="append", choices=tuple(LOGIN_BINS),
@@ -4348,7 +4729,11 @@ def build_parser():
     lo.set_defaults(fn=cmd_login)
 
     se = sub.add_parser("secret", help="read or write a secret",
-                        usage="actas secret set REF | actas secret --ref REF | actas secret ENV KEY [--set]")
+                        usage="actas secret set REF | actas secret --ref REF | actas secret ENV KEY [--set]",
+                        description="Store a secret (prompted, or piped on stdin) or print one; the helpers "
+                                    "in synced settings files use the printing form. Storing is human-only.",
+                        examples=("actas secret set keychain:actas/client-a",
+                                  "actas secret --ref sops:work/npm_token"))
     se.add_argument("env", nargs="?", metavar="ENV")
     se.add_argument("key", nargs="?", metavar="KEY")
     se.add_argument("value", nargs="?", help="with --set; omit to be prompted or pipe on stdin")
@@ -4357,8 +4742,13 @@ def build_parser():
                                   "(store one with: secret set REF)")
     se.set_defaults(fn=cmd_secret)
 
-    sy = sub.add_parser("sync", help="write .claude/settings.local.json into project repos")
-    sy.add_argument("env", nargs="?", metavar="profile")
+    sy = sub.add_parser("sync", help="write .claude/settings.local.json into project repos",
+                        description="Write each profile's non-secret settings into the "
+                                    ".claude/settings.local.json of the repos it matches, for bare claude, "
+                                    "IDEs and Desktop. Human-only.",
+                        examples=("actas sync --dry-run          show what would change",
+                                  "actas sync work", "actas sync --clean"))
+    sy.add_argument("env", nargs="?", metavar="profile", help="only this profile (default: every profile)")
     sy.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
     sy.add_argument("--clean", action="store_true",
                     help="also remove what actas wrote in files no profile syncs any more")
@@ -4369,20 +4759,31 @@ def build_parser():
     sy.add_argument("--shared", action="store_true", help=argparse.SUPPRESS)
     sy.set_defaults(fn=cmd_sync)
 
-    dk = sub.add_parser("desktop", help="what reaches Claude Desktop, the IDE and other GUI apps")
-    dk.add_argument("env", nargs="?", metavar="profile")
+    dk = sub.add_parser("desktop", help="what reaches Claude Desktop, the IDE and other GUI apps",
+                        description="Show what reaches Claude Desktop, IDE extensions and other GUI apps "
+                                    "for a profile, with blocks to paste there. Never writes app settings.",
+                        examples=("actas desktop", "actas desktop work --print-3p",
+                                  "actas desktop work --vscode"))
+    dk.add_argument("env", nargs="?", metavar="profile", help=by_cwd)
     dk.add_argument("--print-3p", action="store_true",
                     help="print the Desktop third-party inference block (gateway, api-key)")
     dk.add_argument("--vscode", action="store_true", help="print claudeCode.environmentVariables")
     dk.set_defaults(fn=cmd_desktop)
 
-    ins = sub.add_parser("instructions", help="print the rules for agents (or the direnv function)")
+    ins = sub.add_parser("instructions", help="print the rules for agents (or the direnv function)",
+                         description="Print the credential rules for agents, to add to AGENTS.md or "
+                                     "CLAUDE.md, or the use_actas function for direnv.",
+                         examples=("actas instructions >> AGENTS.md",
+                                   "actas instructions --direnv >> ~/.config/direnv/direnvrc"))
     ins.add_argument("--agent", choices=tuple(INSTRUCTION_HINTS), help="also say where to put them")
     ins.add_argument("--direnv", action="store_true", help="print a use_actas function for direnvrc")
     ins.set_defaults(fn=cmd_instructions)
 
-    ah = sub.add_parser("aws-handoff", help="short-lived AWS creds for a cloud session")
-    ah.add_argument("env", nargs="?", metavar="profile")
+    ah = sub.add_parser("aws-handoff", help="short-lived AWS creds for a cloud session",
+                        description="Copy short-lived AWS credentials for a cloud session, which cannot "
+                                    "reach your SSO cache. Human-only.",
+                        examples=("actas aws-handoff work", "actas aws-handoff work --stdout --duration 900"))
+    ah.add_argument("env", nargs="?", metavar="profile", help=by_cwd)
     ah.add_argument("--profile", help="override the profile's AWS profile")
     ah.add_argument("--stdout", action="store_true", help="print instead of copying")
     ah.add_argument("--duration", type=int, default=3600,
@@ -4390,18 +4791,26 @@ def build_parser():
     ah.add_argument("--login", action="store_true", help="log in first if the SSO session expired")
     ah.set_defaults(fn=cmd_aws_handoff)
 
-    d = sub.add_parser("doctor", help="check the setup and the manifest")
+    d = sub.add_parser("doctor", help="check the setup and the manifest",
+                       description="Check the tools, the manifest, file modes, and the shell exports "
+                                   "actas run would clear. Exits 1 on errors.",
+                       examples=("actas doctor", "actas doctor --strict --json  for CI"))
     d.add_argument("--strict", action="store_true", help="treat warnings as errors")
     d.add_argument("--json", action="store_true", help="machine-readable output")
     d.add_argument("--fix", action="store_true", help="tighten actas's own directories to mode 0700")
     d.set_defaults(fn=cmd_doctor)
 
-    m = sub.add_parser("migrate", help="print this v1 manifest as version 2")
+    m = sub.add_parser("migrate", help="print this v1 manifest as version 2",
+                       description="Print a v1 manifest as version 2, with notes on what changes. "
+                                   "--write replaces it and keeps the old file as environments.v1.yaml.",
+                       examples=("actas migrate", "actas migrate --write"))
     m.add_argument("--write", action="store_true",
                    help="replace the manifest (the old one is kept as environments.v1.yaml)")
     m.set_defaults(fn=cmd_migrate)
 
-    h = sub.add_parser("help", help="show help for actas, one command, or a topic (manifest, agents)")
+    h = sub.add_parser("help", help="show help for actas, one command, or a topic (manifest, agents)",
+                       description="Show the everyday commands, one command's help, or a short primer.",
+                       examples=("actas help run", "actas help manifest", "actas help agents"))
     h.add_argument("topic", nargs="?", metavar="command|manifest|agents")
 
     def show_help(a):
@@ -4418,6 +4827,15 @@ def build_parser():
             die(f"no help for {a.topic!r}" + (f"; did you mean: {close}?" if close else "")
                 + " (actas help lists the commands)", 2)
     h.set_defaults(fn=show_help)
+
+    co = sub.add_parser("completion", help="print a shell completion script (bash, zsh, fish)",
+                        description="Print a completion script for commands, options and profile names "
+                                    "(read with `actas list --names`).",
+                        examples=('eval "$(actas completion bash)"   in ~/.bashrc',
+                                  'eval "$(actas completion zsh)"    in ~/.zshrc, after compinit',
+                                  "actas completion fish > ~/.config/fish/completions/actas.fish"))
+    co.add_argument("shell", choices=("bash", "zsh", "fish"))
+    co.set_defaults(fn=lambda a: sys.stdout.write(completion_script(sub, a.shell)))
 
     gc = sub.add_parser("git-credential")
     gc.add_argument("op", nargs="?")
@@ -4488,21 +4906,32 @@ def _main(argv=None):
     if dashdash:
         i = argv.index("--")
         argv, passthrough = argv[:i], argv[i + 1:]
+    _MODE["no_color"] = "--no-color" in argv        # usage errors too, in any position
     if not argv:
         print(short_help(sub))
         sys.exit(0)
     word = first_word(argv)
-    if dashdash and word in sub.choices and word not in ("run", "exec"):
-        p.error("`--` passes arguments only to run and exec")      # D28
     if word is not None and word not in sub.choices:
-        # D1: did-you-mean computed by actas itself, not parsed out of
-        # argparse's message (whose format varies across Python releases).
-        close = close_match(word, [c for c in sub.choices if c not in HIDDEN])
-        p.error(f"unknown command {word!r}" + (f"\n       did you mean: {close}?" if close else ""))
-    a = p.parse_args(argv)
+        names = manifest_names()
+        if word in names:         # `actas <profile> -- cmd`: commands win over profile names
+            argv, word = profile_word(p, argv, word, passthrough, dashdash), "exec"
+        else:
+            # D1: did-you-mean computed by actas itself, not parsed out of
+            # argparse's message (whose format varies across Python releases).
+            close = close_match(word, [c for c in sub.choices if c not in HIDDEN])
+            near = None if close else close_match(word, names)
+            p.error(f"unknown command {word!r}",
+                    f"did you mean: {close}?" if close else
+                    f"did you mean: actas exec {near} -- ...? ({near} is a profile)" if near else None)
+    if dashdash and word in sub.choices and word not in ("run", "exec"):
+        sub.choices[word].error("`--` passes arguments only to run and exec")      # D28
+    a, extra = p.parse_known_args(argv)
+    if extra:
+        sp = sub.choices[a.cmd]
+        sp.error(f"unrecognized arguments: {' '.join(extra)}", unknown_hint(sp, extra))
     a.args = passthrough
     _MODE["json"] = bool(getattr(a, "json", False))
-    _MODE["no_color"] = a.no_color
+    _MODE["no_color"] = bool(a.no_color)
     _MODE["hold"] = True          # released by the gate, a refusal, die() or the end
     if alias_note(word):
         info(alias_note(word))

@@ -296,7 +296,8 @@ under your home). `actas status` there reports no profile (`"profile": null` wit
   cleared and read from secrets, and the agent rules.
 - `actas doctor` validates the manifest and lists problems by path. `actas doctor --strict` turns
   warnings into errors.
-- `actas list --json` lists profiles and roles for scripts.
+- `actas list --json` lists profiles and roles for scripts; `actas list --names` prints one
+  profile name per line.
 
 ---
 
