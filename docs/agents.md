@@ -99,7 +99,7 @@ Each level renders a built-in **preset** of Claude Code permission rules:
 | Local edits | none | allowed | allowed | allowed |
 | Push | `Bash(git push *)`, `Bash(gh pr merge *)`, `Bash(gh release *)`, `Bash(glab mr merge *)` | **deny** | ask | allowed |
 | Deploy | `terraform`/`tofu apply` and `destroy`, `kubectl apply`/`delete`, `helm install`/`upgrade`/`uninstall`, `pulumi up`/`destroy`, `cdk deploy`/`destroy`, `sam deploy`, `aws * delete-*`/`put-*`/`create-*`, `gcloud * delete *`, `az * delete *` | **deny** | ask | ask |
-| Secrets | `actas secret`/`shell`/`aws-handoff`/`git-credential`, `git credential`, `sops`, `gh auth token`, `aws configure export-credentials`, `security find-generic-password`, `op read`; `Edit` of the actas config and state dirs; `Read` of the age key and of credential files (below) | **deny** | **deny** | **deny** |
+| Secrets | `actas secret`/`shell`/`aws-handoff`/`git-credential` (by any path, and as the exact helper command lines actas writes), `git credential`, `sops`, `gh auth token`, `aws configure export-credentials`, `security find-generic-password`, `op read`; `Edit` of the actas config and state dirs; `Read` of the age key and of credential files (below) | **deny** | **deny** | **deny** |
 | Switch | `actas exec`, `actas run`, `actas login`, `actas sync` | ask | ask | ask |
 
 - **allowed** means actas adds no rule, so Claude's own permission mode
@@ -112,9 +112,12 @@ Each level renders a built-in **preset** of Claude Code permission rules:
   - `~/.config/gcloud` and `~/.azure`
   - `~/.config/gh/hosts.yml`
   - `~/.claude/.credentials.json` and `~/.codex/auth.json`
-  - the matching files inside actas-managed homes. In a Claude home only
-    `.credentials.json` is denied, so the agent can still read its own memory
-    and skills there.
+  - `~/.gemini/oauth_creds.json`, `~/.gemini/mcp-oauth-tokens.json` and
+    `~/.gemini/.env`
+  - the matching files inside actas-managed homes and `home:` paths. In a
+    Claude home only `.credentials.json` is denied, so the agent can still
+    read its own memory and skills there; a Gemini home keeps its
+    `.gemini/settings.json` readable.
 - **Approving the "Switch" ask** only lets `actas exec` start. actas's own
   [gate](#the-gate) still decides whether the command runs.
 - **Where rules go:** into the settings file that `actas run` passes to
@@ -338,10 +341,26 @@ How `ask_user` is built:
 
 - The command comes from argv and is shown with shell quoting, so a `;` or a
   `|` inside an argument is displayed, never run.
-- If the command starts a shell or interpreter (`sh`, `bash`, `python`,
-  `node`, `env`, `xargs`…) or contains `; | & $`, a backtick or a newline, a
-  line is added: `Warning: this runs a shell or interpreter; read the whole
-  command before running it.`
+- If the command starts a shell, an interpreter, a package runner or a
+  wrapper (`sh`, `bash`, `python`, `node`, `deno`, `npx`, `uvx`, `bunx`,
+  `make`, `awk`, `env`, `xargs`, `sudo`, `nohup`, `ssh`…), runs code through
+  a subcommand (`pipx run`, `uv run`, `go run`, `cargo run`, `npm exec`,
+  `docker run`/`exec`, `kubectl exec`/`run`/`debug`…) or contains
+  `; | & $`, a backtick or a newline, a line is added: `Warning: this runs a
+  shell or interpreter; read the whole command before running it.`
+- **Credential values are hidden.** When the agent's shell expanded a
+  credential into the command (`curl -H "Authorization: Bearer $GH_TOKEN"`),
+  the value of that variable is shown as `<$GH_TOKEN>`, and a token-shaped
+  string (`ghp_…`, `sk-…`, `AKIA…`, a JWT, a `Bearer` value) as `<token>`,
+  in the text, in the suggested command and in the `--json` `command`.
+  Hidden are values (8+ characters) of known credential variables
+  (`GH_TOKEN`, `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY`…), of every
+  `secret_env` name in the manifest, and of any variable whose name contains
+  `TOKEN`, `SECRET`, `PASSW`, `API_KEY` or `ACCESS_KEY`. A `Note:` line then says the
+  command does not run as shown: put the value back yourself, preferably
+  the target profile's own (`sh -c '… "$GH_TOKEN" …'`), since the agent's
+  copy belongs to its session. The audit log's `argv_sha256` still hashes
+  the real argv; `cmd0` is hidden the same way.
 - The agent's `--reason` loses control characters and is capped at 200
   characters. **Read the command, not the reason.**
 
@@ -395,8 +414,8 @@ tail -n 50 ~/.local/state/actas/audit.jsonl
   - `decision`: `allowed`, `confirmed-tty`, `refused-needs-user` or
     `refused-confirm`.
   - `reason`, and `agent` (`detected`, `signals`, `session`, `record_pid`).
-  - `cmd0` (the program name) and `argv_sha256` (a hash of the full
-    command).
+  - `cmd0` (the program name, with a credential value hidden as in
+    `ask_user`) and `argv_sha256` (a hash of the full command).
   - `cwd` (with `~`), `refs` (names only) and `actas_version`.
 - **Never secret values.** The log is a record of what happened, not a
   defence: same-user code can edit it.
@@ -421,8 +440,12 @@ Claude's `apiKeyHelper` and git call, so they print any ref's value in agent
 context too. They are audit-logged (`secret-read`), and
 [rule 7](../AGENTS.md#credentials-actas) forbids `actas secret` and
 `git credential`. For Claude Code, v2 manifests also render Bash deny rules
-for all three helpers unless `permissions.builtin: false`; v1 manifests,
-Codex, Gemini and other `exec`-launched agents have no such rule.
+for all three helpers unless `permissions.builtin: false`: for the bare
+`actas`/`ccenv` name, for any path ending in `/actas` or `/ccenv` (so
+`python3 /…/bin/actas secret …` too), and for the exact command lines actas
+writes into `apiKeyHelper` and `GIT_CONFIG_VALUE_*`. Wrapped forms
+(`sh -c`, `eval`) are not covered; Bash rules are not a boundary. v1
+manifests, Codex, Gemini and other `exec`-launched agents have no such rule.
 
 **What actas does not stop:** code running as your user that is determined to
 get around it. Such code can:

@@ -244,7 +244,8 @@ CRED_PATHS = {"aws": ["~/.aws/sso/cache", "~/.aws/sso/cache/**", "~/.aws/cli/cac
                       "~/.aws/credentials"],
               "gcp": ["~/.config/gcloud", "~/.config/gcloud/**"], "azure": ["~/.azure", "~/.azure/**"],
               "github": ["~/.config/gh/hosts.yml"],
-              "claude": ["~/.claude/.credentials.json"], "codex": ["~/.codex/auth.json"]}
+              "claude": ["~/.claude/.credentials.json"], "codex": ["~/.codex/auth.json"],
+              "gemini": ["~/.gemini/oauth_creds.json", "~/.gemini/mcp-oauth-tokens.json", "~/.gemini/.env"]}
 # What a login writes into a home: an `_off` home holding any of these has
 # stopped being empty (SPEC 4.8), so actas moves it aside before using it.
 OFF_CRED = {"aws": ["config", "credentials"], "github": ["hosts.yml"],
@@ -252,8 +253,10 @@ OFF_CRED = {"aws": ["config", "credentials"], "github": ["hosts.yml"],
                     "application_default_credentials.json"],
             "azure": ["msal_token_cache.json", "msal_token_cache.bin", "service_principal_entries.json",
                       "service_principal_entries.bin"]}
+# A gemini home (GEMINI_CLI_HOME) stands in for ~, so its stores sit under .gemini/.
 HOME_CRED = {"gcp": "**", "azure": "**", "github": "hosts.yml", "claude": ".credentials.json",
-             "codex": "auth.json"}
+             "codex": "auth.json",
+             "gemini": (".gemini/oauth_creds.json", ".gemini/mcp-oauth-tokens.json", ".gemini/.env")}
 # Agent policy presets (SPEC 7.1): per level, what each intent renders to.
 # "allow" renders no rule; actas never adds allow rules.
 PRESETS = {"readonly": {"push": "deny", "deploy": "deny", "secrets": "deny", "switch": "ask"},
@@ -267,7 +270,11 @@ INTENT_RULES = {k: [f"Bash({r})" for r in v.split("|")] for k, v in {
               "gcloud * delete *|az * delete *",
     "secrets": "actas secret*|actas shell*|actas aws-handoff*|actas git-credential*|git credential *|"
                "sops *|gh auth token*|aws configure export-credentials*|security find-generic-password *|"
-               "op read *",
+               "op read *|"
+               # actas by any path (a package's console script, python plus a
+               # checkout's bin/actas): the forms helper strings use.
+               "*/actas secret*|*/actas shell*|*/actas aws-handoff*|*/actas git-credential*|"
+               "*/ccenv secret*|*/ccenv shell*|*/ccenv aws-handoff*|*/ccenv git-credential*",
     "switch": "actas exec *|actas run*|actas login*|actas sync*",
 }.items()}
 # Legacy: the deprecated `ccenv` alias runs the same program, so it gets the same rules.
@@ -277,7 +284,15 @@ for _rules in (INTENT_RULES["secrets"], INTENT_RULES["switch"]):
 # printed after the `actas-stop:` line (SPEC 8.4).
 ANCESTOR_AGENTS = {"claude", "codex", "gemini", "agy", "cursor-agent", "copilot", "aider", "opencode",
                    "goose", "amp", "kiro-cli"}
-INTERPRETER_RE = re.compile(r"^(sh|bash|zsh|fish|dash|env|eval|xargs|python.*|node|perl|ruby)$")
+# ask_user's warning (SPEC 8.4): a program that runs other code (a shell, an
+# interpreter, a package runner or a wrapper), or a `<tool> <sub>` that does.
+INTERPRETER_RE = re.compile(r"^(sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh|env|eval|exec|xargs|command|nohup|sudo|"
+                            r"doas|timeout|nice|time|watch|ssh|script|python.*|pypy.*|node|nodejs|deno|bun|"
+                            r"bunx|npx|pnpx|uvx|perl|ruby|php|lua|tclsh|awk|gawk|osascript|pwsh|powershell|"
+                            r"make|gmake|just)$")
+RUNNER_RE = re.compile(r"^((pipx|uv|go|cargo|poetry|pdm|hatch|pipenv|bundle|dotnet) (run|exec)"
+                       r"|(npm|pnpm|yarn) (exec|run|run-script|dlx|x)|(docker|podman|nerdctl) (run|exec|compose)"
+                       r"|kubectl (exec|run|debug))$")
 SHELL_META_RE = re.compile(r"[;|&$`\n]")
 EXPIRED_RE = re.compile(r"Token has expired|ExpiredToken|SSO session|UnauthorizedSSOToken")
 REASONS = {
@@ -923,6 +938,20 @@ TOKEN_RE = re.compile(r"^(sk-ant-[a-z]+\d\d-|eyJ)[\w.-]{10}|^(AKIA|ASIA)[A-Z0-9]
                       r"|^(sk-|gh[pousr]_|github_pat_|glpat-|npm_|hf_|AIza|xox[abposr]-|xapp-)"
                       r"([A-Za-z0-9]{16,}|(?=.*\d)(?=.*[A-Z])[\w.-]{16,})$")
 PASTED = "looks like a pasted token, not a key name (the value is not repeated)"
+# The same prefixes anywhere inside a string (redact_argv), plus JWTs and a
+# `Bearer` value: what a shell-expanded credential in an argv looks like.
+TOKEN_IN_RE = re.compile(r"(?<![\w-])(?:sk-ant-[a-z]+\d\d-[\w-]{10,}|eyJ[\w-]{10,}(?:\.[\w-]+){0,2}"
+                         r"|(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])"
+                         r"|(?:sk-|gh[pousr]_|github_pat_|glpat-|npm_|hf_|AIza|xox[abposr]-|xapp-)"
+                         r"(?:[A-Za-z0-9]{16,}|(?=[\w.-]*\d)(?=[\w.-]*[A-Z])[\w.-]{16,}))"
+                         r"|(?<=[Bb]earer )[\w.~+/=-]{16,}")
+# Variables whose values redact_argv hides: credentials actas or the tools
+# put in the environment, and any name that says it holds one.
+CRED_VARS = set("GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN COPILOT_GITHUB_TOKEN "
+                "ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN AWS_BEARER_TOKEN_BEDROCK "
+                "OPENAI_API_KEY CODEX_API_KEY CODEX_ACCESS_TOKEN GEMINI_API_KEY GOOGLE_API_KEY "
+                "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AZURE_CLIENT_SECRET".split())
+CRED_NAME_RE = re.compile(r"TOKEN|SECRET|PASSW|API_?KEY|ACCESS_KEY|PRIVATE_KEY|AUTH_KEY", re.I)
 
 
 def pasted_token(v):
@@ -1495,16 +1524,17 @@ def current_name(path):
     return alt if base == "ccenv" and os.path.exists(alt) else path
 
 
-def helper_prefix():
+def helper_prefix(quiet=False):
     """How helper strings call actas (SPEC 5.4): the package's console script
     (it carries its venv's shebang), else python plus this script's path as
-    started, without realpath, so a symlinked install survives a moved checkout."""
+    started, without realpath, so a symlinked install survives a moved checkout.
+    quiet: no project-local warning (agent_policy renders it into deny rules)."""
     if BUILD == "package":
         a = sys.argv[0] if sys.argv and sys.argv[0] else "actas"
         a = os.path.abspath(a) if "/" in a else (shutil.which(a) or os.path.abspath(a))
         return shell_quote(current_name(a))
     py = helper_python()
-    if _under(py, os.getcwd()) or {".venv", "venv", "envs"} & set(Path(py).parts):
+    if not quiet and (_under(py, os.getcwd()) or {".venv", "venv", "envs"} & set(Path(py).parts)):
         warn(f"helpers will run {py}, which looks project-local; "
              "run actas with a system python3 so helpers survive")
     return shell_quote(py) + " " + shell_quote(current_name(os.path.abspath(__file__)))
@@ -1822,9 +1852,9 @@ def cred_rules(cfg):
             if m not in refd:
                 continue
             paths = list(CRED_PATHS.get(m, []))
-            if m in HOME_CRED:
-                paths.append(f"{STATE}/homes/{m}/*/{HOME_CRED[m]}")
-                paths += [f"{expand(h)}/{HOME_CRED[m]}" for h in
+            for c in as_list(HOME_CRED.get(m)):
+                paths.append(f"{STATE}/homes/{m}/*/{c}")
+                paths += [f"{expand(h)}/{c}" for h in
                           (section(b, m).get("home") for b in bodies)
                           if isinstance(h, str) and h.startswith(("/", "~"))]
             rules += [r for r in (f"Read({rule_path(x)})" for x in paths) if r not in rules]
@@ -1841,6 +1871,8 @@ def agent_policy(prof):
         for intent, act in PRESETS[level].items():
             if act != "allow":
                 pol[act] += INTENT_RULES[intent] + (list(prof.get("_cred_rules") or []) if intent == "secrets" else [])
+            if act != "allow" and intent == "secrets":
+                pol[act] += helper_rules()
     extra = section(section(prof, "claude").get("settings") or {}, "permissions")
     for k in ("deny", "ask"):
         for r in list(perms.get(k) or []) + [x for x in as_list(extra.get(k)) if isinstance(x, str)]:
@@ -1848,6 +1880,14 @@ def agent_policy(prof):
                 pol[k].append(r)
     pol["gemini"] = GEMINI_MODE[level]
     return pol
+
+
+def helper_rules():
+    """The exact command lines apiKeyHelper and git's credential helper run
+    (the agent sees them in settings and GIT_CONFIG_VALUE_*), denied like the
+    bare `actas secret`: INTENT_RULES' */actas forms miss a quoted path."""
+    pre = helper_prefix(quiet=True)
+    return [f"Bash({pre} {sub}*)" for sub in ("secret", "git-credential", "shell", "aws-handoff")]
 
 
 def profile_tool(cfg, name):
@@ -2211,7 +2251,7 @@ def audit(action, prof=None, decision="allowed", reason=None, from_profile=None,
             "from_profile": from_profile, "decision": decision, "reason": reason,
             "agent": {"detected": w["agent"], "signals": w["signals"],
                       "session": rec.get("profile") or env_get("ACTAS"), "record_pid": rec.get("pid")},
-            "cmd0": cmd[0] if cmd else None,
+            "cmd0": redact_argv(cmd[:1])[0][0] if cmd else None,
             "argv_sha256": hashlib.sha256(json.dumps(list(cmd)).encode()).hexdigest() if cmd else None,
             "cwd": cwd, "refs": sorted(refs), "actas_version": __version__}
     try:
@@ -2227,9 +2267,42 @@ def clean_reason(text):
     return "".join(ch for ch in str(text) if ch.isprintable())[:200] if text else None
 
 
-def ask_user(T, cmd, suggest, reason=None, human=False):
+def redact_argv(argv, names=()):
+    """-> (argv with credential values hidden, the placeholders used). A
+    value of a credential variable in this environment (CRED_VARS, names, or
+    a name that says so; 8+ characters) becomes <$NAME>, a token-shaped
+    string <token>: an agent's shell may have expanded one into the argv."""
+    names = set(names) | CRED_VARS
+    vals = sorted(((v.strip(), k) for k, v in os.environ.items()
+                   if (k in names or CRED_NAME_RE.search(k)) and not k.startswith(NEVER_OWNED_PREFIX)
+                   and len(v.strip()) >= 8),
+                  key=lambda x: (-len(x[0]), x[1]))
+    shown, used = [], []
+
+    def mark(ph):
+        if ph not in used:
+            used.append(ph)
+        return ph
+    for a in map(str, argv):
+        for v, k in vals:
+            if v in a:
+                a = a.replace(v, mark(f"<${k}>"))
+        shown.append(TOKEN_IN_RE.sub(lambda _m: mark("<token>"), a))
+    return shown, used
+
+
+def secret_names(cfg):
+    """Every secret_env name the manifest defines (any profile's may be in
+    the agent's environment)."""
+    bodies = [cfg.defaults] + list(cfg.roles.values()) + list(cfg.profiles.values())
+    return {k for b in bodies if isinstance(b, dict) for k in section(b, "secret_env")}
+
+
+def ask_user(T, cmd, suggest, reason=None, human=False, names=()):
     """SPEC 8.4. The command comes from argv and is shown with shlex.join,
-    so `;` or `|` inside an argument is quoted, never run."""
+    so `;` or `|` inside an argument is quoted, never run. Credential values
+    in it are hidden (redact_argv), with a line saying so."""
+    raw, (cmd, hidden), suggest = cmd, redact_argv(cmd, names), redact_argv(suggest, names)[0]
     ids = [f"aws:{section(T, 'aws')['profile']}"] if section(T, "aws").get("profile") else []
     ids += [f"gh:{gh_label(T)}"] if gh_label(T) else []
     what = f"`{shlex.join(cmd)}` as actas profile {T['name']} ({T['level']}{'; ' + ', '.join(ids) if ids else ''})"
@@ -2241,15 +2314,29 @@ def ask_user(T, cmd, suggest, reason=None, human=False):
             lines.append(f'Agent\'s reason: "{clean_reason(reason)}"')
         lines.append("If you agree, run it yourself in a separate terminal (not inside the agent session):")
     lines.append("  " + shlex.join(suggest))
-    if cmd and (INTERPRETER_RE.match(os.path.basename(cmd[0])) or any(SHELL_META_RE.search(x) for x in cmd)):
+    if hidden:
+        lines.append(redacted_note(hidden, T["name"]))
+    cmd = raw
+    if cmd and (INTERPRETER_RE.match(os.path.basename(cmd[0])) or any(SHELL_META_RE.search(x) for x in cmd)
+                or len(cmd) > 1 and RUNNER_RE.match(f"{os.path.basename(cmd[0])} {cmd[1]}")):
         lines.append("Warning: this runs a shell or interpreter; read the whole command before running it.")
     return "\n".join(lines)
 
 
+def redacted_note(hidden, name=None):
+    whose = f"profile {name}'s own value" if name else "the right value"
+    return (f"Note: credential values are hidden as {', '.join(hidden)}, so this does not run as shown. "
+            f"Put {whose} back in yourself (the agent's copy belongs to its own session), "
+            "or have it read from the variable by name, e.g. sh -c '... \"$NAME\" ...'.")
+
+
 def stop(reason, ask, profile=None, code="needs_user", current=None, requested=None, command=None,
-         agent_reason=None, action="refusal", payload=True):
+         agent_reason=None, action="refusal", payload=True, raw_command=None):
     """A refusal: the `actas-stop:` line first on stderr, then prose and the
-    ask_user text; the JSON payload on stdout with --json (SPEC 10.4)."""
+    ask_user text; the JSON payload on stdout with --json (SPEC 10.4).
+    command: as shown (redacted); raw_command: what the audit hash covers."""
+    if isinstance(profile, str):          # from argv: may be a pasted value
+        profile = redact_argv([profile])[0][0]
     name = profile["name"] if isinstance(profile, dict) else profile
     print(f"actas-stop: code={code} reason={reason} profile={name or '-'}", file=sys.stderr)
     release()
@@ -2257,7 +2344,8 @@ def stop(reason, ask, profile=None, code="needs_user", current=None, requested=N
           file=sys.stderr)
     print("actas: show the user this ask_user text exactly, then stop:\n" + ask, file=sys.stderr)
     cur = current or {"profile": None, "level": None, "source": None}
-    audit(action, profile, "refused-needs-user", reason=reason, from_profile=cur["profile"], cmd=command)
+    audit(action, profile, "refused-needs-user", reason=reason, from_profile=cur["profile"],
+          cmd=command if raw_command is None else raw_command)
     if payload and _MODE["json"]:
         print(json.dumps({"ok": False, "code": code, "reason": reason, "current": cur, "requested": requested,
                           "command": command, "agent_reason": clean_reason(agent_reason), "ask_user": ask,
@@ -2277,13 +2365,14 @@ def gate(cfg, T, action, cmd, suggest, reason=None):
     S = profile_or_none(cfg, s_name)
 
     def refuse(r, human=False):
-        ask = ask_user(T, cmd, suggest, reason, human)
+        names = secret_names(cfg)
+        ask = ask_user(T, cmd, suggest, reason, human, names)
         if r == "not_allowed" and L(T) <= L(S) and not (not R and T["level"] == "power"):
             ask += "\n" + allow_hint(S, T, frozen=bool(R and isinstance(R.get("allowed"), list)))
         stop(r, ask, T,
              current={"profile": S and S["name"], "level": S and S["level"], "source": source if S else None},
              requested={"profile": T["name"], "level": T["level"], "confirm": T["confirm"]},
-             command=list(cmd), agent_reason=reason, action=action)
+             command=redact_argv(cmd, names)[0], raw_command=list(cmd), agent_reason=reason, action=action)
 
     allowed, R = None, w["record"]
     if w["agent"]:
@@ -2362,8 +2451,10 @@ def require_human(what, profile=None, argv=None):
     if not who()["agent"]:
         return
     argv = ["actas"] + list(argv if argv is not None else _MODE["argv"] or [what])
-    stop("human_only", "In your own terminal (not inside the agent session), run: " + shlex.join(argv),
-         profile, command=argv, action=what)
+    shown, hidden = redact_argv(argv)
+    stop("human_only", "In your own terminal (not inside the agent session), run: " + shlex.join(shown)
+         + ("\n" + redacted_note(hidden) if hidden else ""),
+         profile, command=shown, raw_command=argv, action=what)
 
 
 def surface(w):
