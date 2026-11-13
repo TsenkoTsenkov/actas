@@ -14,10 +14,7 @@ resolved when needed and never written to disk in the clear.
 
 import argparse
 import copy
-import difflib
 import fnmatch
-import glob
-import hashlib
 import json
 import os
 import pwd
@@ -26,7 +23,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -487,6 +483,7 @@ def ensure_dir(d, tighten=False):
 def write_private(path, text):
     """Atomic, owner-only write: a temp file in the same directory, fsync,
     then rename over the target. Readers never see a partial or 0644 file."""
+    import tempfile                 # imported where used: keeps helper commands' startup short
     path = Path(path)
     ensure_dir(path.parent)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix="." + path.name + ".", suffix=".tmp")
@@ -513,6 +510,7 @@ def shell_quote(s):
 
 
 def close_match(word, choices):
+    import difflib
     close = difflib.get_close_matches(str(word), [str(c) for c in choices], n=1)
     return close[0] if close else None
 
@@ -546,10 +544,20 @@ def parse_text(text, label):
     except ImportError:
         yaml = None
     if yaml is not None:
+        # libyaml's loader when present (~10x faster, same SafeConstructor
+        # types); its errors lack the source line and caret, so a failure is
+        # parsed again with the pure-Python loader for the message.
+        loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
         try:
-            return yaml.safe_load(text) or {}
+            return yaml.load(text, Loader=loader) or {}
         except yaml.YAMLError as e:
-            raise ManifestError(f"{label}: invalid YAML: {e}")
+            err = e
+        if loader is not yaml.SafeLoader:
+            try:
+                return yaml.safe_load(text) or {}
+            except yaml.YAMLError as e:
+                err = e
+        raise ManifestError(f"{label}: invalid YAML: {err}")
     if not text.strip():
         return {}
     with suppress(ValueError):
@@ -2089,6 +2097,7 @@ def settings_for(prof, res=None, source="run"):
 def write_settings_file(name, settings):
     """CACHE/<p>.<sha256[:12]>.settings.json: concurrent runs with different
     content never share a file. Files older than 7 days are pruned."""
+    import hashlib
     text = json.dumps(settings, indent=2) + "\n"
     ensure_dir(CACHE, tighten=True)
     f = CACHE / f"{name}.{hashlib.sha256(text.encode()).hexdigest()[:12]}.settings.json"
@@ -2121,6 +2130,104 @@ def read_ps():
     return r.stdout if r.returncode == 0 else None
 
 
+_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+KINFO_SIZE, KINFO_PID, KINFO_PPID = 648, 40, 560   # struct kinfo_proc on 64-bit macOS; start time at 0
+
+
+def ps_lstart(sec):
+    """ps's lstart for a start time, as ps_table keeps it: `%c` in the C
+    locale (day of month not zero-padded) with runs of spaces collapsed."""
+    t = time.localtime(sec)
+    return (f"{_DAYS[t.tm_wday]} {_MONTHS[t.tm_mon - 1]} {t.tm_mday} "
+            f"{t.tm_hour:02d}:{t.tm_min:02d}:{t.tm_sec:02d} {t.tm_year}")
+
+
+def read_chain():
+    """macOS: this process and its ancestors, in read_ps's format, from
+    sysctl instead of `ps -A` (whose ~80-120 ms goes on reading every
+    process's arguments). Each row holds what ps prints: ppid and start
+    time from KERN_PROC_PID, comm = argv[0] from KERN_PROCARGS2. A process
+    whose arguments this user cannot read (another user's, such as login or
+    launchd), or whose argv[0] is not plain printable ASCII (ps escapes
+    it), is asked of the system ps with one `ps -p`, so every row equals
+    its `ps -A` row. None (the caller then runs `ps -A`) off macOS or on
+    anything unexpected. Nothing here depends on PATH or the environment."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+
+        def sysctl(mib, size):
+            buf, n = ctypes.create_string_buffer(size), ctypes.c_size_t(size)
+            if libc.sysctl((ctypes.c_int * len(mib))(*mib), len(mib), buf, ctypes.byref(n), None, 0) != 0:
+                return None
+            return buf.raw[:n.value]
+
+        def num(raw, off, size):
+            return int.from_bytes(raw[off:off + size], sys.byteorder, signed=True)
+
+        def argv0(pid):
+            raw = sysctl((1, 49, pid), 1 << 16)       # CTL_KERN, KERN_PROCARGS2: argc, exec path, argv
+            if not raw or len(raw) < 4 or num(raw, 0, 4) < 1:
+                return None
+            rest = raw[4:].split(b"\0", 1)
+            if len(rest) < 2:
+                return None
+            a0 = rest[1].lstrip(b"\0").split(b"\0", 1)[0]     # ps skips the same NUL padding
+            return a0.decode() if a0 and all(0x20 <= c < 0x7f for c in a0) else None
+
+        rows, got, pid = {}, {}, os.getpid()
+        while pid > 0 and pid not in rows and len(rows) < 66:
+            k = sysctl((1, 14, 1, pid), KINFO_SIZE)   # CTL_KERN, KERN_PROC, KERN_PROC_PID
+            if k == b"":
+                break                                  # gone: `ps -A` would not list it either
+            if k is None or len(k) != KINFO_SIZE or num(k, KINFO_PID, 4) != pid:
+                return None                            # an unknown layout: use `ps -A`
+            rows[pid] = (num(k, KINFO_PPID, 4), ps_lstart(num(k, 0, 8)), argv0(pid))
+            pid = rows[pid][0]
+        ask = [p for p, r in rows.items() if r[2] is None]
+        if ask:
+            # One pid per ps: given several, macOS ps reads the whole table
+            # (~35 ms); one pid takes ~5 ms, and these run side by side.
+            ps = next((p for p in PS_BINS if os.path.exists(p)), None)
+            if not ps:
+                return None
+            groups = [[p] for p in ask] if len(ask) <= 4 else [ask]
+            procs = [subprocess.Popen([ps, "-p", ",".join(map(str, g)), "-o", "pid=,ppid=,lstart=,comm="],
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                      stderr=subprocess.DEVNULL, text=True, env=dict(os.environ, LC_ALL="C"))
+                     for g in groups]
+            for pr in procs:
+                try:
+                    text = pr.communicate(timeout=5)[0]
+                except subprocess.TimeoutExpired:
+                    for x in procs:
+                        x.kill()
+                    return None
+                for line in text.splitlines():
+                    f = line.split(None, 7)
+                    if len(f) == 8 and f[0].isdigit() and f[1].isdigit():
+                        got[int(f[0])] = line
+            if not got:
+                return None
+        out = []
+        for p, (ppid, start, comm) in rows.items():   # child to ancestor
+            if comm is None and p not in got:
+                break                                  # exited meanwhile: the chain ends here, as in `ps -A`
+            out.append(got[p] if comm is None else f"{p} {ppid} {start} {comm}")
+        return "\n".join(out) + "\n"
+    except Exception:
+        return None
+
+
+def read_procs():
+    """The process table ps_table parses: on macOS only this process's
+    ancestor chain (read_chain), else, or if that fails, `ps -A`."""
+    return (read_chain() if PS_NATIVE else None) or read_ps()
+
+
 def tty_confirm(prompt):
     """The human's typed answer, read from /dev/tty; None without a terminal."""
     try:      # separate handles: "r+" on a tty needs a seekable stream and always fails
@@ -2132,7 +2239,7 @@ def tty_confirm(prompt):
         return None
 
 
-PS_READER = read_ps          # tests inject a fake process table
+PS_READER = read_procs       # tests inject a fake process table
 CONFIRM_FN = tty_confirm     # tests inject the typed answer
 _CACHE = {}                  # per invocation: the process table, who(), the yq probe (cleared by main)
 SESSIONS = STATE / "sessions"
@@ -2147,18 +2254,22 @@ def passwd_home():
 # Fixed places no environment variable moves (F8): the system ps, and a
 # per-user copy of every session record under the passwd home, so an agent
 # that moves HOME/XDG_STATE_HOME still finds its record. actas_testlib
-# rewrites these two lines in its sandbox copy; there is no runtime override.
+# rewrites these lines in its sandbox copy; there is no runtime override.
+# PS_NATIVE: read the ancestor chain with sysctl on macOS (read_chain); the
+# sandbox turns it off so its fake ps (which masks agent names) is used.
 # The sessions dir follows the state dir's legacy fallback (legacy_dir): an
 # old ccenv run's records are found while ~/.local/state/ccenv is in use. Once
 # ~/.local/state/actas exists, such a record names the old state dir and would
 # be refused (override) anyway, so the old dir is not searched.
 PS_BINS = ("/bin/ps", "/usr/bin/ps")
+PS_NATIVE = True
 USER_STATE = Path(passwd_home() or HOME) / ".local" / "state"
 USER_SESSIONS = legacy_dir(USER_STATE) / "sessions"
 
 
 def ps_table():
-    """{pid: (ppid, lstart, comm)} from one `ps -A` call; {} on failure."""
+    """{pid: (ppid, lstart, comm)} from one PS_READER call (on macOS only
+    this process and its ancestors); {} on failure."""
     if "ps" not in _CACHE:
         table = {}
         try:
@@ -2233,6 +2344,18 @@ def profile_or_none(cfg, name):
         return None
 
 
+def pid_alive(pid):
+    """Whether pid names a live process (the table may hold only our
+    ancestors). Another user's process counts as alive."""
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except (OSError, OverflowError, ValueError):
+        return False
+    return pid > 0
+
+
 def write_record(prof, allowed=None):
     """STATE/sessions/<own pid>.json (and the same in USER_SESSIONS) just
     before exec: the pid survives exec, so the record belongs to the agent
@@ -2240,7 +2363,7 @@ def write_record(prof, allowed=None):
     outer session's reach (F9). Returns whether a record was written."""
     table, me, dirs = ps_table(), os.getpid(), list(dict.fromkeys((SESSIONS, USER_SESSIONS)))
     for f in [f for d in dirs if table and d.is_dir() for f in d.glob("*.json")]:
-        if not f.stem.isdigit() or int(f.stem) not in table:
+        if not f.stem.isdigit() or not pid_alive(int(f.stem)):
             with suppress(OSError):
                 f.unlink()
     start = table.get(me, (0, None))[1]
@@ -2262,6 +2385,7 @@ def write_record(prof, allowed=None):
 
 def audit(action, prof=None, decision="allowed", reason=None, from_profile=None, cmd=None, refs=()):
     """One JSON line in STATE/audit.jsonl (SPEC 8.5). Names, never values."""
+    import hashlib
     w = who()
     rec = w["record"] or {}
     name, level = (prof["name"], prof["level"]) if isinstance(prof, dict) else (prof, None)
@@ -2629,15 +2753,27 @@ def cmd_run(a):
     profile = section(prof, "aws").get("profile")
     # Never log in unless asked to with --login; otherwise only probe the
     # target profile (D14) and start anyway. Both see the profile's AWS env.
+    # The plain probe runs in a background thread while secrets resolve
+    # (daemon: a die() while resolving does not wait for aws); --login stays
+    # serial because it is interactive.
+    probe = None
     if profile and (a.login or not a.no_check):
         aws_env = child_env(assemble(prof, want_secrets=False))
-        st = probe_aws(profile, aws_env)["status"]
-        if a.login and st != "ok":
-            if not aws_login(section(prof, "aws"), aws_env) or probe_aws(profile, aws_env)["status"] != "ok":
+        if a.login:
+            if probe_aws(profile, aws_env)["status"] != "ok" and (
+                    not aws_login(section(prof, "aws"), aws_env) or probe_aws(profile, aws_env)["status"] != "ok"):
                 die(f"AWS SSO login failed for profile {profile}")
-        elif st == "expired":
-            warn(f"AWS credentials for {profile} have expired; starting anyway (run: actas login {name})")
+        else:
+            import threading
+            box = {}
+            probe = threading.Thread(target=lambda: box.update(st=probe_aws(profile, aws_env)["status"]),
+                                     daemon=True)
+            probe.start()
     res = assemble(prof, ctx={"agent": True, "tool": tool, "materialize": True})
+    if probe:
+        probe.join()
+        if box.get("st") == "expired":
+            warn(f"AWS credentials for {profile} have expired; starting anyway (run: actas login {name})")
     env = child_env(res)
     args = list(section(prof, tool).get("args") or []) + a.args
     if tool == "claude":
@@ -2969,26 +3105,59 @@ def probe_github(g, env):
     return {"status": st, "login": login} if st == "ok" else {"status": st}
 
 
+def in_parallel(jobs):
+    """{name: fn()} for {name: fn}, each fn in its own thread (the probes
+    wait on network round trips). An exception is re-raised here, in the
+    main thread, as if the calls had run one after another."""
+    import threading
+    res, errs = {}, {}
+
+    def work(k, fn):
+        try:
+            res[k] = fn()
+        except BaseException as e:          # die() raises SystemExit
+            errs[k] = e
+    threads = [threading.Thread(target=work, args=kv, daemon=True) for kv in jobs.items()]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for k in jobs:
+        if k in errs:
+            raise errs[k]
+    return res
+
+
 def probe_all(prof, ids):
     """status --probe (SPEC 4): one probe per active module, with the
     profile's env; adds identities.<m>.probe. Returns the expired modules."""
     env = child_env(assemble(prof, want_secrets=False))
     a, g, z = section(prof, "aws"), section(prof, "github"), section(prof, "azure")
+    jobs = {}                   # independent and non-interactive: run side by side
     if a.get("profile"):
-        ids["aws"]["probe"] = probe_aws(a["profile"], env)
+        jobs["aws"] = lambda: probe_aws(a["profile"], env)
     if isinstance(prof.get("gcp"), dict):
-        ids["gcp"]["probe"] = {"status": probe_rc(["gcloud", "auth", "print-access-token", "--quiet"], env)[0]}
+        jobs["gcp"] = lambda: {"status": probe_rc(["gcloud", "auth", "print-access-token", "--quiet"], env)[0]}
     if isinstance(prof.get("azure"), dict):
-        st, out = probe_rc(["az", "account", "show", "--query", "{id:id,tenant:tenantId,user:user.name}",
-                            "-o", "json", "--only-show-errors"], env, quiet=False)
+        jobs["azure"] = lambda: probe_rc(["az", "account", "show", "--query",
+                                          "{id:id,tenant:tenantId,user:user.name}",
+                                          "-o", "json", "--only-show-errors"], env, quiet=False)
+    if g.get("auth") or g.get("home"):
+        jobs["github"] = lambda: probe_github(g, env)
+    res = in_parallel(jobs)
+    for m in ("aws", "gcp"):
+        if m in res:
+            ids[m]["probe"] = res[m]
+    if "azure" in res:
+        st, out = res["azure"]
         pr = {"status": st}
         with suppress(ValueError):
             pr.update(json.loads(out) if st == "ok" else {})
         if st == "ok" and z.get("subscription") and pr.get("id") != z["subscription"]:
             warn(f"az is on subscription {pr.get('id')}, not {z['subscription']}")
         ids["azure"]["probe"] = pr
-    if g.get("auth") or g.get("home"):
-        ids["github"]["probe"] = probe_github(g, env)
+    if "github" in res:
+        ids["github"]["probe"] = res["github"]
     return [m for m, v in ids.items() if isinstance(v, dict) and (v.get("probe") or {}).get("status") == "expired"]
 
 
@@ -3173,6 +3342,7 @@ def has_glob(p):
 
 
 def sync_dirs(prof):
+    import glob
     dirs = []
     for pat in prof["match"]:
         ex = expand(pat)

@@ -184,11 +184,12 @@ How to help:
     `ACTAS_STATE` and XDG dirs, and a `PATH` of fake `gh`, `aws`, `sops`,
     `security`, `op`, `gcloud`, `az`, `claude`, `codex`, `gemini` and `ps`.
   - Tests run a sandbox copy of `bin/actas` (`self.bin`, also what `self.m`
-    is loaded from) in which the two fixed-place seams, `PS_BINS` (the
-    system `ps`) and `USER_STATE` (the passwd home's state dir, holding the
-    session records), name the fake `ps` and a temp dir. Keep those two lines
-    exactly as `SEAMS` in the testlib spells them; the shipped binary has no
-    override.
+    is loaded from) in which the fixed-place seams, `PS_BINS` (the system
+    `ps`) and `USER_STATE` (the passwd home's state dir, holding the session
+    records), name the fake `ps` and a temp dir, and `PS_NATIVE = True` (the
+    macOS `sysctl` ancestor reader, which the fake `ps` could not mask)
+    becomes `False`. Keep those lines exactly as `SEAMS` in the testlib
+    spells them; the shipped binary has no override.
   - No test may reach a real login, the developer's `~/.config/actas` or
     `~/.local/state/actas`.
   - Run: `python3 -m unittest discover -s tests -v`. Check 3.9 with

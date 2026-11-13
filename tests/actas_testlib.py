@@ -9,7 +9,8 @@ stdin) as JSON lines to $FAKE_LOG.
 The sandbox runs a copy of bin/actas (self.bin, also what the in-process
 module self.m is loaded from, so helper strings name it) whose two fixed-place
 seams, PS_BINS and USER_STATE (the passwd-home state dir holding the fixed
-sessions dirs), point at the fake ps and a temp dir: no test reads the real
+sessions dirs), point at the fake ps and a temp dir, and whose PS_NATIVE (the
+macOS sysctl ancestor reader) is off: no test reads the real
 process table's agent names or the developer's ~/.local/state/actas/sessions
 (or ~/.local/state/ccenv/sessions, which a pre-rename install that never moved
 its state dir still uses), and the shipped binary has no override for them.
@@ -250,17 +251,21 @@ def make_fakebin(d, only=None):
 
 
 SEAMS = ('PS_BINS = ("/bin/ps", "/usr/bin/ps")',
-         'USER_STATE = Path(passwd_home() or HOME) / ".local" / "state"')
+         'USER_STATE = Path(passwd_home() or HOME) / ".local" / "state"',
+         'PS_NATIVE = True')
 
 
 def sandbox_bin(dest, ps, sessions):
     """A copy of bin/actas whose PS_BINS / USER_STATE lines name ps and the
     state dir above sessions (<user state>/actas/sessions, or the legacy
     <user state>/ccenv/sessions while only that one exists; both derive
-    from the same line)."""
+    from the same line), and whose PS_NATIVE is off, so the process table
+    always comes from that ps (the macOS sysctl reader would see the real,
+    unmasked agent ancestors)."""
     src = BIN.read_text(encoding="utf-8")
     user_state = Path(sessions).parent.parent
-    for old, new in zip(SEAMS, (f"PS_BINS = ({str(ps)!r},)", f"USER_STATE = Path({str(user_state)!r})")):
+    for old, new in zip(SEAMS, (f"PS_BINS = ({str(ps)!r},)", f"USER_STATE = Path({str(user_state)!r})",
+                                "PS_NATIVE = False")):
         assert src.count(old) == 1, f"seam line changed in bin/actas: {old}"
         src = src.replace(old, new)
     dest = Path(dest)
