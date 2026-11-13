@@ -117,6 +117,10 @@ Each level renders a built-in **preset** of Claude Code permission rules:
     and skills there.
 - **Approving the "Switch" ask** only lets `actas exec` start. actas's own
   [gate](#the-gate) still decides whether the command runs.
+- **`actas <profile> -- cmd`**, the short form of `actas exec <profile> --
+  cmd`, works only outside agent context. Inside it, actas rejects it as a
+  usage error (exit 2) that names the `actas exec` form, so an agent's switch
+  always matches the `Bash(actas exec *)` ask rule.
 - **Where rules go:** into the settings file that `actas run` passes to
   Claude Code (`--settings`), and into `.claude/settings.local.json` written
   by `actas sync`.

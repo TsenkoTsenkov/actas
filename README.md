@@ -88,6 +88,11 @@ ln -s ~/.local/share/actas/bin/actas ~/.local/bin/actas    # any directory on yo
 
 actas is not on PyPI or Homebrew; use one of the methods above.
 
+**Tab completion** for commands, options and profile names:
+`eval "$(actas completion bash)"` in `~/.bashrc`, `eval "$(actas completion zsh)"`
+in `~/.zshrc` (after `compinit`), or
+`actas completion fish > ~/.config/fish/completions/actas.fish`.
+
 <details>
 <summary>install.sh (once a release is tagged)</summary>
 
@@ -484,7 +489,12 @@ command's flags, `actas help manifest` and `actas help agents` give short
 primers, and `actas --help` lists everything. `--cwd DIR` works with any command
 and resolves the profile as if you were in `DIR`; it wins over the session's
 profile in `status`, `exec` and `run`. Arguments after `--` go to
-the launched tool: `actas run client-a -- --resume`.
+the launched tool: `actas run client-a -- --resume`. In your own terminal,
+`actas client-a -- terraform plan` is short for
+`actas exec client-a -- terraform plan` (command names win over profile
+names; agent sessions spell out `exec`). A mistyped option prints that
+command's usage line and a hint; `--no-color` works before or after the
+command.
 
 **Everyday**
 
@@ -492,9 +502,9 @@ the launched tool: `actas run client-a -- --resume`.
 |---|---|
 | `actas init` | Create `~/.config/actas` with a starter manifest (and a `.sops.yaml` when an age key exists). Never overwrites. |
 | `actas run [profile] [-t claude\|codex\|gemini] [--login] [-- args]` | Launch the profile's tool with its identity. Warns about expired AWS credentials; logs in only with `--login`. |
-| `actas exec [profile] [--reason TEXT] -- cmd …` | Run any command with a profile's identity. Returns the command's own exit code. |
+| `actas exec [profile] [--reason TEXT] -- cmd …` | Run any command with a profile's identity. Returns the command's own exit code. Short form: `actas <profile> -- cmd …`. |
 | `actas status [profile] [--why] [--probe] [--json]` | Which profile applies and what it sets. `--why`: the `use:` chain and where each value comes from. `--probe`: check each login. Alias: `whoami`. |
-| `actas list [--check] [--json]` | All profiles and roles. `--check` also probes AWS and gateway secrets. |
+| `actas list [--check] [--json] [--names]` | All profiles and roles; `*` marks the profile matching this directory, `+` this session's. `--check` also probes AWS and gateway secrets. `--names`: one profile name per line. |
 | `actas login [profile] [--module M] [--all]` | Log in: AWS SSO by default (plus Codex for Codex profiles). `--module gcp\|azure\|github\|codex` (for a `gh:` account, gh's previously active account is switched back afterwards). `--all`: one AWS login per SSO session or portal. |
 | `actas sync [profile] [--dry-run] [--clean [--force]] [--include-confirm]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what actas wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing). `--include-confirm` also writes `confirm` profiles. |
 | `actas doctor [--strict] [--json] [--fix]` | Check tools, the manifest, file modes, and the shell exports `run` would clear. `--fix` only tightens actas's own directories to 0700. |
@@ -509,6 +519,7 @@ the launched tool: `actas run client-a -- --resume`.
 | `actas instructions [--agent claude\|codex\|gemini\|generic] [--direnv]` | Print the agent rules, or the direnv function. |
 | `actas migrate [--write]` | Print a v1 manifest as version 2. `--write` replaces it and keeps the old file. |
 | `actas aws-handoff [profile] [--stdout] [--login]` | Copy short-lived AWS credentials for a cloud session. |
+| `actas completion bash\|zsh\|fish` | Print a tab-completion script (commands, options, profile names). |
 
 Exit codes: `0` ok, `1` error, `2` usage, `3` needs the user (an `actas-stop:`
 refusal), `4` credentials expired. Apart from these, `exec` and `run` return

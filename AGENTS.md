@@ -68,9 +68,9 @@ still decides whether you may use it.
 | `actas status --json` (alias `whoami`) | The session's profile, the cwd's profile, `mismatch`, identities, agent signals |
 | `actas status --why` | The `use:` chain, where each value comes from, and how many agent rules apply (`--json` lists them) |
 | `actas status --probe` | Also checks each login over the network. Exits 4 with `actas-stop: code=expired` if one has expired. |
-| `actas list [--json]`, `actas list --check` | Profiles and roles; `--check` also probes AWS and secret availability (status only, never values) |
+| `actas list [--json]`, `actas list --check`, `actas list --names` | Profiles and roles; `--check` also probes AWS and secret availability (status only, never values); `--names` prints only the names |
 | `actas doctor` (without `--fix`) | Tool and manifest checks. `actas doctor --fix` changes directory modes: a human runs it. |
-| `actas help`, `actas help <cmd>`, `actas instructions` | Static text |
+| `actas help`, `actas help <cmd>`, `actas instructions`, `actas completion <shell>` | Static text |
 | `actas desktop [profile]`, `actas migrate` (no `--write`) | Print setup text. Refs are names, never values. |
 
 **Ask:** the user approves the tool call, then actas's own gate decides.
@@ -171,8 +171,10 @@ How to help:
   agent can set is no bypass.
 - **CLI:** add new options with a `help=` string so they appear in
   `actas --help` and `actas help <cmd>`. A new command also goes into
-  `EVERYDAY` or `ADVANCED`, the two tiers `actas help` shows. Usage errors
-  print help and exit 2.
+  `EVERYDAY` or `ADVANCED`, the two tiers `actas help` shows. Give it a
+  `description=` and `examples=`. Usage errors exit 2: an unknown command
+  prints the full help, a bad argument to a known command prints only that
+  command's usage line and one hint (`Parser.error`).
 - **Tests:**
   - Use stdlib `unittest` with the `Sandbox` class in
     `tests/actas_testlib.py`. Each test gets a temp `HOME`, `ACTAS_ROOT`,
