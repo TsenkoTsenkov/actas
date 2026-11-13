@@ -72,11 +72,17 @@ uv tool install git+https://github.com/TsenkoTsenkov/actas
 pipx install git+https://github.com/TsenkoTsenkov/actas
 ```
 
-Update with `uv tool upgrade actas` (or `pipx upgrade actas`). Remove with
-`uv tool uninstall actas`. Your configuration in `~/.config/actas` is left
-alone. Installed as `ccenv` before the rename? Run `uv tool uninstall ccenv`
-first, then the install line above (it installs both `actas` and the `ccenv`
-alias).
+Update with `uv tool upgrade actas` (or `pipx upgrade actas`). To remove it,
+see [Uninstall](#uninstall). Installed as `ccenv` before the rename? Run
+`uv tool uninstall ccenv` first, then the install line above (it installs both
+`actas` and the `ccenv` alias).
+
+The install carries the Claude Code skill and the direnv function, so you need
+no checkout for them: `actas setup skill` writes
+`~/.claude/skills/actas/SKILL.md`, and `actas setup direnv` writes
+`~/.config/direnv/lib/actas.sh`. Run them again after an upgrade.
+`actas --version` names the install: `actas 2.0.0b1 (package)` for uv or pipx
+(plus the git commit when it recorded one), `(git <commit>)` for a checkout.
 
 **A git checkout with a symlink.** Update with `git pull`.
 
@@ -98,7 +104,10 @@ in `~/.zshrc` (after `compinit`), or
 
 It downloads the single-file release, checks its SHA-256 and installs it as
 `~/.local/bin/actas`. It never uses sudo, and it refuses to write through a
-symlink. No release is tagged yet, so this does not work today.
+symlink. No release is tagged yet, so this does not work today. uv and pipx
+also link into `~/.local/bin`: install.sh does not replace their `actas`, so
+switching from one of them means `uv tool uninstall actas` (or
+`pipx uninstall actas`) first.
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/TsenkoTsenkov/actas/main/install.sh
@@ -145,6 +154,30 @@ actas secret set sops:client-a/token      # prompted
 
 Your configuration lives in `~/.config/actas` (`ACTAS_ROOT`), separate from
 this repository. Keep it private.
+
+### Uninstall
+
+1. Undo `actas sync` first. Synced repos call the actas binary from
+   `.claude/settings.local.json` (a SessionStart hook, and `apiKeyHelper` for
+   gateway and API-key profiles), so they break once it is gone:
+
+   ```bash
+   actas sync --clean --all --dry-run    # list what would be removed
+   actas sync --clean --all              # add --force for files it keeps (it says why)
+   ```
+
+   It removes only what actas wrote (your own keys stay) and works without a
+   manifest.
+2. Remove the program: `uv tool uninstall actas` or `pipx uninstall actas`;
+   `rm ~/.local/bin/actas` for install.sh; for a checkout,
+   `rm ~/.local/bin/actas && rm -rf ~/.local/share/actas`. Remove a `ccenv`
+   alias link too, if you made one.
+3. Optionally remove what actas kept: `~/.claude/skills/actas` and
+   `~/.config/direnv/lib/actas.sh` (from `actas setup`), `~/.cache/actas`,
+   `~/.local/state/actas` (managed homes, the sync ledger, the audit log) and
+   `~/.config/actas` (your manifest, and `secrets.enc.yaml`: keep a copy if
+   you may want the secrets). Keychain, 1Password and `gh` entries are left
+   where they are.
 
 ## Quick start
 
@@ -411,7 +444,7 @@ configuration. The full matrix is in
 | Bare `claude`, IDE extensions, Claude Desktop (local sessions) | `actas sync` writes `.claude/settings.local.json` in each matching repo; `actas desktop <p> --print-3p` / `--vscode` print the app-wide gateway and VS Code blocks | `secret_env` values; with `github.auth`, a GitHub token (`gh` is logged out there; HTTPS `git push` still works through the helper); `claude.home`; `confirm` profiles unless `--include-confirm`. Desktop has one claude.ai account and one provider for the whole app. |
 | Remote Control | as the local session it drives (`actas run` or `sync`) | Gateway, API-key, Bedrock and Vertex profiles (`actas list` shows `remote=`). |
 | Cloud sessions (claude.ai/code) | Subscription only. For AWS, run `actas aws-handoff` in your terminal and paste the short-lived credentials | Local files, gateways, API keys, Bedrock/Vertex. |
-| Other GUI apps, shells, direnv | `actas exec <p> -- <app binary>`, `eval "$(actas shell)"`, or `use actas` with [contrib/direnvrc](contrib/direnvrc) | `--format env` and direnv get non-secret values only. Under direnv, git over HTTPS uses the profile's account, but `gh` acts as whichever account is active in gh's keyring; use `actas exec` or `github.home` for a per-profile `gh`. |
+| Other GUI apps, shells, direnv | `actas exec <p> -- <app binary>`, `eval "$(actas shell)"`, or `use actas` after `actas setup direnv` ([contrib/direnvrc](contrib/direnvrc)) | `--format env` and direnv get non-secret values only. Under direnv, git over HTTPS uses the profile's account, but `gh` acts as whichever account is active in gh's keyring; use `actas exec` or `github.home` for a per-profile `gh`. |
 
 ## AI agents
 
@@ -449,9 +482,11 @@ your project's `AGENTS.md` (for Claude Code, also add `@AGENTS.md` to
 `CLAUDE.md`).
 
 **Agent skills.** [skills/actas](skills/actas/SKILL.md) teaches Claude Code to
-check its identity before cloud or GitHub commands (copy it to
-`~/.claude/skills/actas`). [skills/aws-handoff](skills/aws-handoff/SKILL.md)
-is a `/aws-handoff` command for cloud sessions.
+check its identity before cloud or GitHub commands: `actas setup skill`
+installs it as `~/.claude/skills/actas` (or link the checkout's directory there).
+[skills/aws-handoff](skills/aws-handoff/SKILL.md) is a `/aws-handoff` command
+for cloud sessions: `actas setup skill aws-handoff` writes it into the
+current repository's `.claude/skills`, to commit.
 
 **These guardrails are a seatbelt, not a boundary.** They stop a confused or
 prompt-injected agent that follows its instructions. They do not stop code
@@ -507,7 +542,7 @@ command.
 | `actas status [profile] [--why] [--probe] [--json]` | Which profile applies and what it sets. `--why`: the `use:` chain and where each value comes from. `--probe`: check each login (the checks run in parallel). Outside every `match` (no session, no `fallback`) it reports no profile and a `match` to add. Alias: `whoami`. |
 | `actas list [--check] [--json] [--names]` | All profiles and roles; `*` marks the profile matching this directory, `+` this session's. `--check` also probes AWS and gateway secrets. `--names`: one profile name per line. |
 | `actas login [profile] [--module M] [--all]` | Log in: AWS SSO by default (plus Codex for Codex profiles). `--module gcp\|azure\|github\|codex` (for a `gh:` account, gh's previously active account is switched back afterwards). `--all`: one AWS login per SSO session or portal; exits 1 and names the portals whose login failed. |
-| `actas sync [profile] [--dry-run] [--clean [--force]] [--include-confirm]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what actas wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing). `--include-confirm` also writes `confirm` profiles. |
+| `actas sync [profile] [--dry-run] [--clean [--all] [--force]] [--include-confirm]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what actas wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing); `--clean --all` removes it from every synced file and writes nothing (before [uninstalling](#uninstall)). `--include-confirm` also writes `confirm` profiles. |
 | `actas doctor [--strict] [--json] [--fix]` | Check tools, the manifest, file modes, and the shell exports `run` would clear. Warns when a `gh:` account the manifest names is not logged in, an `aws.profile` is not in `~/.aws/config` or `~/.aws/credentials`, a tool a ref or `tool:` needs (sops, age key, op, codex, ...) is missing, or a git identity is a placeholder (`you@example.com`). It never reads a secret. `--fix` only tightens actas's own directories to 0700. |
 
 **Advanced**
@@ -517,7 +552,8 @@ command.
 | `actas shell [profile] [--format sh\|fish\|direnv\|json\|env] [--no-secrets]` | Print the environment, for `eval "$(actas shell)"`, direnv or a GUI app. |
 | `actas secret set REF` / `actas secret --ref REF` | Store a secret (prompted, or from stdin), or print one (helpers use this). |
 | `actas desktop [profile] [--print-3p] [--vscode]` | What reaches Claude Desktop and IDEs, plus blocks to paste there. |
-| `actas instructions [--agent claude\|codex\|gemini\|generic] [--direnv]` | Print the agent rules, or the direnv function. |
+| `actas instructions [--agent claude\|codex\|gemini\|generic] [--direnv] [--skill [NAME]]` | Print the agent rules, the direnv function, or a Claude Code skill's `SKILL.md`. |
+| `actas setup skill [NAME] [--dir DIR]` / `actas setup direnv [--file FILE]` | Install the Claude Code skill (`actas` into `~/.claude/skills`, `aws-handoff` into `./.claude/skills`) or the direnv function (`~/.config/direnv/lib/actas.sh`). `--dry-run`; `--force` replaces a file actas did not write. |
 | `actas migrate [--write]` | Print a v1 manifest as version 2. `--write` replaces it and keeps the old file. |
 | `actas aws-handoff [profile] [--stdout] [--login]` | Copy short-lived AWS credentials for a cloud session. |
 | `actas completion bash\|zsh\|fish` | Print a tab-completion script (commands, options, profile names). |

@@ -8,6 +8,8 @@
 # `BUILD = "script"` to `BUILD = "package"`. The version is read from
 # `__version__` in bin/actas. Nothing is published to PyPI. The package also
 # installs a deprecated `ccenv` command (the name before the rename).
+# bin/actas carries the Claude Code skills and the direnv function, so the
+# wheel has them without data files: `actas setup skill`, `actas setup direnv`.
 
 [build-system]
 requires = ["hatchling>=1.26"]

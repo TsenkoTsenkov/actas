@@ -189,7 +189,8 @@ class LegacyCompat(Sandbox):
         (c,) = self.doctor_checks("skill")
         self.assertEqual(c["status"], "warn")
         self.assertIn("no longer exists", c["detail"])
-        self.assertIn("rm ~/.claude/skills/ccenv && ln -s ", c["detail"])        # a link: plain rm
+        self.assertIn("rm ~/.claude/skills/ccenv && actas setup skill --dir ~/.claude/skills",
+                      c["detail"])                                        # a link: plain rm; no checkout here
         (skills / "ccenv").unlink()
         (skills / "ccenv").mkdir()                                          # an old copy
         (skills / "ccenv" / "SKILL.md").write_text("If ccenv prints a line starting with `ccenv-stop:` ...\n")

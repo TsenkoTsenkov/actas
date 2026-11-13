@@ -634,8 +634,9 @@ This recipe is guidance, not yet verified with a specific devcontainer or VM set
 
 ## direnv, mise and AWS credential tools
 
-- **direnv:** `actas instructions --direnv` prints a `use_actas` function for
-  `~/.config/direnv/direnvrc` (also in `contrib/direnvrc`). Add `use actas` (or
+- **direnv:** `actas setup direnv` writes a `use_actas` function to
+  `~/.config/direnv/lib/actas.sh`, which direnv loads (`actas instructions --direnv` prints it for
+  `~/.config/direnv/direnvrc`; also in `contrib/direnvrc`). Add `use actas` (or
   `use actas <profile>`) to a project's `.envrc`. Only non-secret variables reach your shell.
   With `github.auth`, the token is not among them: `gh` in that shell uses its own keyring login
   (actas does not point it at the empty fail-closed config there), while `git push` uses

@@ -164,6 +164,11 @@ How to help:
 - **`AGENT_RULES` has one source:** the constant in `bin/actas`. If you change
   it, paste the new text into this file and into `skills/actas/SKILL.md`. The
   test in `tests/test_agent_rules.py` fails until all three match.
+- **The skills and the direnv function ship inside `bin/actas`** (`SKILLS`,
+  `DIRENVRC`), so `actas setup` works for uv/pipx and install.sh installs.
+  `skills/*/SKILL.md` and `contrib/direnvrc` are copies: change the constant,
+  then regenerate them with `bin/actas instructions --skill [NAME]` and
+  `bin/actas instructions --direnv`. `tests/test_p7_packaging.py` compares them.
 - **The old name is legacy only.** actas was called ccenv. New code reads
   variables through `env_get()` / `env_any()` (`ACTAS_X`, then the old
   `CCENV_X`) and default directories through `legacy_dir()`, and writes only

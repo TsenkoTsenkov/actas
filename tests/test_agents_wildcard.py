@@ -22,19 +22,16 @@ V2 = {
     },
 }
 
-V1 = """version: 1
-defaults:
-  provider: subscription
-  agents_may_use: ["*"]
-environments:
-  p1:
-    match: %(tmp)s/code/std
-    github: {account: ada-one}
-  p2:
-    github: {account: ada-two}
-  p3:
-    agents_may_use: [p1]
-"""
+# A dict (written as JSON): it loads without PyYAML or yq.
+V1 = {
+    "version": 1,
+    "defaults": {"provider": "subscription", "agents_may_use": ["*"]},
+    "environments": {
+        "p1": {"match": "%(tmp)s/code/std", "github": {"account": "ada-one"}},
+        "p2": {"github": {"account": "ada-two"}},
+        "p3": {"agents_may_use": ["p1"]},
+    },
+}
 
 
 class Wild(Base):
@@ -189,9 +186,12 @@ class V1Wildcard(Wild):
         self.assertIn("agents_may_use of environments.p3, or in defaults", err)
 
     def test_v1_bad_value(self):
-        self.write_manifest(V1.replace('["*"]', "nope"))
+        bad = json.loads(json.dumps(V1))
+        bad["defaults"]["agents_may_use"] = "nope"
+        self.write_manifest(bad)
         code, out, err = self.call("doctor")
         self.assertNotEqual(code, 0, out + err)
+        self.assertIn("agents_may_use", out + err)
 
 
 if __name__ == "__main__":
