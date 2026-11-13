@@ -730,8 +730,9 @@ class G4Status(Sandbox):
         self.assertNotIn("commands:", r.stderr)                    # no full help dump
         r = self.cli("exec", "h", "aws", "s3", "ls")
         self.assertIn("actas exec <profile> -- aws s3 ls", r.stderr)
-        r = self.cli("status", "--cwd", str(self.tmp))
-        self.assertIn("add `match: [~/code/x/**]` to a profile, or `fallback: <profile>`", r.stderr)
+        r = self.cli("exec", "--cwd", str(self.tmp), "--", "true")
+        self.assertIn(f'add `match: ["{self.tmp}"]` to a profile (it covers subdirectories too), '
+                      "or set `fallback: <profile>`", r.stderr)
 
 
 class G4Docs(unittest.TestCase):
