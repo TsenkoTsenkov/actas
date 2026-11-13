@@ -23,8 +23,7 @@ command.
 
 _One manifest, two terminals running as two different accounts at once, any
 agent or CLI, `status --why`, and an agent that is refused a more powerful
-profile until you approve it in your own terminal. Dummy data, about 80
-seconds; click it for the sharper [MP4 version](docs/demo/actas-demo.mp4) · [how the demo is made](docs/demo/README.md)_
+profile until you approve it in your own terminal.
 
 ```console
 $ cd ~/code/client-a/api
