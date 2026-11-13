@@ -59,6 +59,191 @@ install git+https://github.com/TsenkoTsenkov/actas` (or the same with
 See [Coming from ccenv](docs/migration.md#coming-from-ccenv) for the steps and
 for what you can move or rename at your own pace.
 
+### Beta review: fixes and CLI improvements
+
+A review of the whole tool after the rename. Items that can change how an
+existing manifest behaves: the glob matching fix, the `claude.settings`
+permission lists, the git variables now cleared, and the YAML 1.2 value rules
+for version 2 files.
+
+**CLI**
+
+- a mistyped option or extra argument for a known command prints that
+  command's usage line and one hint (`did you mean: --json?`, where `--` goes
+  for `run`/`exec`, or `actas help <cmd>`) instead of the full help. An
+  unknown command still shows the full help with a did-you-mean.
+- `actas <profile> -- cmd` is short for `actas exec <profile> -- cmd` in your
+  own terminal; command names win over profile names. Inside an agent session
+  it is a usage error that names the `actas exec` form, so the Switch ask rule
+  still applies. A bare or mistyped profile name points to `actas exec`.
+- `actas completion bash|zsh|fish` prints a tab-completion script for
+  commands, options and profile names; `actas list --names` prints one profile
+  name per line.
+- `--no-color` works after the command too (`actas status --no-color`).
+- every command's help (`actas help <cmd>`) has a description and examples;
+  `run`'s usage shows `[-- tool args...]`.
+- `*` after a name marks the profile matching this directory and `+` this
+  session's profile, without widening the lines; `--json` is unchanged.
+- `actas init` takes the starter profile's git identity from your global git
+  config. Without one, the `git:` line stays commented out, so the starter no
+  longer puts `Your Name <you@example.com>` into commits.
+- `actas doctor` checks what the manifest names against this machine: `gh:`
+  accounts that `gh auth status` does not list (per host, also inside a
+  session), `aws.profile` values that are in neither the AWS config file nor
+  the credentials file, and missing tools for refs and tools in use
+  (`secrets.enc.yaml`, sops and an age key for `sops:`, `op` for `op://`,
+  `security` for `keychain:`, `cmd:` programs, codex or gemini for `tool:`).
+  It also flags git identities at reserved example domains (`example.com`,
+  `*.example`). These are warnings, so `--strict` fails on them. It reads no
+  secret and makes no new network calls.
+- `actas list --check` reads a gateway token shared by several profiles once,
+  not once per profile (one op or Keychain prompt).
+- `actas login --all` exits 1 and names the SSO portals whose login failed or
+  did not take, after trying the rest. It used to always exit 0.
+- Help and AGENTS.md: `list --check` probes AWS logins and gateway tokens. The
+  old text said 'secret availability'.
+
+**Correctness**
+
+- Composition: `claude.settings.permissions.deny` and `.ask` are now unioned
+  through `use:` and sticky, like `permissions.deny`/`ask`. Before, a
+  profile's own list silently replaced a role's rules. A manifest that relied
+  on a profile replacing or dropping a role's `claude.settings` deny/ask list
+  (including `claude.settings: null` or `claude: null`) now gets an error that
+  names the layer. `claude.settings.permissions.allow` still replaces, so
+  composing never allows more than one layer says.
+- Directory matching: a glob pattern now also matches the directories below
+  the ones it matches, as documented (`~/code/*/infra` covers
+  `~/code/a/infra/modules`). Before, those subdirectories fell through to a
+  broader profile, possibly one with a different level and credentials. This
+  applies to v1 manifests too: v1 had the same bug, and patterns that end in
+  `*` are unaffected.
+- No-match hint: outside every `match`, actas now names the directory and
+  suggests a pattern that matches it: the git repository's top directory under
+  your home when there is one, otherwise the directory. The old hint suggested
+  `~/code/x/**`, which does not match `~/code/x` itself.
+- `actas status` (and `--json`) outside every `match`, with no session and no
+  `fallback`, now reports no profile instead of failing: `"profile": null`
+  plus a `hint`, exit 0. `status --why`/`--probe`, `run` and `exec` still fail
+  with exit 1. Agents are told that a null `profile` means: do not run remote
+  commands, tell the user.
+- Fixed: with `github.host` set to an enterprise host, a `gh:<login>` ref
+  without `@host` now means `gh:<login>@<host>`. The token is read for that
+  host and the git credential helper names it. Before, actas read the
+  github.com account's token and sent it to the enterprise host.
+- Fixed: git's `GIT_AUTHOR_NAME/EMAIL`, `GIT_COMMITTER_NAME/EMAIL` and
+  `GIT_SSH_COMMAND` from your shell are now cleared when the manifest uses
+  `git`. Before, they silently overrode the profile's
+  `git.name`/`email`/`ssh_key`. Keep one with `inherit: [VAR]`, or all of them
+  with `git: inherit`. v1 manifests clear only the name and email variables
+  for what the environment sets.
+- Fixed: more identity overrides are cleared when their module is used:
+  `CLOUDSDK_CORE_ACCOUNT`, `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` and
+  `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` (gcp); the Azure SDK service-
+  principal variables `AZURE_CLIENT_ID/SECRET/TENANT_ID/...` and
+  `ARM_ACCESS_KEY`, `ARM_OIDC_TOKEN`, `ARM_CLIENT_CERTIFICATE_*` (azure); and
+  `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `AWS_WEB_IDENTITY_TOKEN_FILE`,
+  `AWS_CONTAINER_CREDENTIALS_*` and `AWS_CONTAINER_AUTHORIZATION_TOKEN*`
+  (aws). This applies to v2 manifests only.
+- Fixed: reading a `gh:` ref from inside another profile's session (for
+  example `actas exec a` from an `actas run b` session where b uses
+  `github.home`) no longer uses that session's managed `GH_CONFIG_DIR`. Any
+  home under actas's state dir is ignored, not only `_off`.
+
+**Security**
+
+- Security: refusals no longer repeat credential values an agent's shell
+  expanded into the command. Values of credential variables (GH_TOKEN,
+  ANTHROPIC_API_KEY, AWS_SECRET_ACCESS_KEY..., every manifest secret_env name,
+  and names containing TOKEN/SECRET/PASSW/API_KEY/ACCESS_KEY) show as <$NAME>,
+  and token-shaped strings as <token>. This applies in the ask_user text, the
+  suggested command, the --json `command`, human-only refusals and the audit
+  log's cmd0, with a Note asking the user to put the right value back.
+  argv_sha256 still hashes the real argv.
+- Security: the built-in secrets deny rules now also match actas/ccenv by any
+  path (`Bash(*/actas secret*)`...) and the exact helper command lines actas
+  writes into apiKeyHelper and GIT_CONFIG_VALUE_* (python plus checkout path,
+  or the package's console script).
+- Security: Gemini credential stores (~/.gemini/oauth_creds.json, mcp-oauth-
+  tokens.json, .env, and the same files in gemini homes) are Read-denied for
+  Claude Code when the manifest uses Gemini.
+- Security: the ask_user 'runs a shell or interpreter' warning now also covers
+  package runners and wrappers (npx, uvx, bunx, deno, make, awk, sudo, nohup,
+  ssh...) and run/exec subcommands (pipx run, uv run, go run, cargo run, npm
+  exec, docker run/exec, kubectl exec/run/debug...).
+- Security: the agent's `--reason` is redacted the same way in the ask_user
+  text and the --json `agent_reason`.
+
+**Speed**
+
+- Faster on macOS: agent detection reads the ancestor processes from the
+  kernel (sysctl) instead of running `ps -A` over the whole process table.
+  Status, exec, run, the direnv hook and git-credential get noticeably faster
+  (status about 46% faster here, direnv about 50%). Each row is exactly what
+  ps prints. Other users' processes such as `login` still come from the system
+  `/bin/ps -p`, and anything unexpected falls back to `ps -A`, so detection is
+  unchanged. Linux still uses `ps -A`.
+- Stale session records are pruned by checking whether the pid is still alive,
+  not whether it appears in the full process table.
+- `actas status --probe` runs its aws, gcloud, az and gh checks in parallel.
+  `actas run` checks the AWS login while it resolves secrets, not before
+  (`--login` is unchanged).
+- Manifests are parsed with PyYAML's libyaml loader when available (about 10x
+  faster). Error messages still show the offending line and caret.
+
+**Install, packaging and manifests**
+
+- Manifest values are read the same way with PyYAML and with yq (close to YAML
+  1.2). Only `true`/`false` are booleans, and a number counts as a number only
+  when it reads back exactly as written. `0755`, `012345678901`, `0x1F`,
+  `1_000`, `1:30`, `2024-01-01`, `1.10`, `yes`, `on` and `NO` are passed as
+  written; before, they could be silently converted (octal, a dropped leading
+  zero, sexagesimal, dates) or rejected on one install and accepted on
+  another. `true`/`false` in `env` are still errors. Version 1 files keep
+  their old YAML 1.1 reading.
+- New `actas setup skill [NAME] [--dir DIR]` and `actas setup direnv [--file
+  FILE]` (human-only, with `--dry-run` and `--force`) install the Claude Code
+  skill and the direnv function that this actas carries
+  (`~/.claude/skills/actas/SKILL.md`, `~/.config/direnv/lib/actas.sh`).
+  uv/pipx and install.sh users no longer need a checkout for them. `actas
+  instructions --skill [NAME]` prints a skill's SKILL.md. doctor points at
+  `actas setup skill` and reports a copied skill from another version.
+- New `actas sync --clean --all` removes what actas wrote in every synced file
+  and writes nothing. It works without a manifest and is meant to be run
+  before uninstalling. The README has an Uninstall section for uv, pipx,
+  install.sh and a checkout.
+- `actas --version` names the install: `(package)` for uv/pipx (plus the git
+  commit when one was recorded), or `(git <commit>[+changes])` for a checkout.
+  A copied single file prints the version alone.
+- install.sh no longer replaces a uv or pipx install's `actas` link, even with
+  `--force`; it says to use `uv tool upgrade` or to uninstall first. It no
+  longer warns about a `ccenv` link that is already an alias of actas.
+- CI: one test leg and the release job install PyYAML, so the README and
+  examples/ manifests are checked. The v1 wildcard tests no longer need a YAML
+  parser.
+- A version 2 manifest that writes `yes`/`no`/`on`/`off` for a true/false key
+  (`confirm: yes`) gets an error saying to write true or false; in
+  `claude.settings` such words get a warning, since they reach Claude as text.
+
+**Robustness**
+
+- A file actas cannot read or write (a read-only repo, an unwritable cache or
+  state directory) now ends in one `actas: <path>: <reason>` line with exit 1
+  instead of a Python traceback; set `ACTAS_DEBUG=1` to see the traceback. A
+  closed stdout pipe (`actas list | head`) exits quietly.
+- `actas sync` skips a repo it cannot write (warning `skip <file>: cannot
+  write it`), still writes the other repos and exits 1. The ledger is now
+  saved even when a repo fails, so files written earlier in the run stay
+  recorded and `sync --clean` can still remove them. A file `--clean` cannot
+  change keeps its ledger entry and is retried next time.
+- `actas aws-handoff` dies with a clear message when `aws sts get-session-
+  token` or `export-credentials` prints something unusable. It still never
+  hands over long-lived keys.
+- `actas secret ENV KEY` (the v1 form) now adds the same fix-it hint as
+  `--ref` when a secret is missing: `(run: actas secret ENV KEY --set)`.
+- Per-invocation state (warnings, held stderr lines, the decrypted-secrets
+  cache, output mode) is reset at the start of every in-process `main()` call.
+
 ### Added
 
 - **`agents_may_use: ["*"]` and in `defaults:`:** let agents `actas exec`

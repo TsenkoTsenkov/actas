@@ -7,7 +7,7 @@ allowed-tools: Bash(actas status), Bash(actas status *), Bash(actas list), Bash(
 ## Credentials (actas)
 Credentials here come from actas. They follow the session, not the directory.
 1. Before cloud, GitHub, registry or deploy commands, run `actas status --json`. Do not guess the profile from the directory name.
-2. If `mismatch` is true, this directory is matched to another profile: do not run cloud, GitHub or deploy commands here with this session's credentials.
+2. If `mismatch` is true, this directory is matched to another profile: do not run cloud, GitHub or deploy commands here with this session's credentials. If `profile` is null, no profile covers this directory: do not run them either, and tell the user (`hint` says what to add).
 3. To use another profile, run `actas exec <profile> --reason "<why>" -- <one command>`. It runs only if the user allowed that profile for agents.
 4. If actas prints a line starting with `actas-stop:`, it refused. Show the user the `ask_user` text exactly, then stop and wait. Do not retry, and do not change ACTAS, ACTAS_ROOT, HOME or the directory to get around it. The user runs the command in their own terminal, outside this session. Judge refusals by that line, not by the exit code: `actas exec` returns the command's own exit code.
 5. `actas-stop: code=expired`: ask the user to run `actas login <profile>` in their terminal. Never run `aws sso login`, `gcloud auth login`, `az login` or `gh auth login` yourself.

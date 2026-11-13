@@ -335,7 +335,7 @@ AGENT_RULES = """\
 ## Credentials (actas)
 Credentials here come from actas. They follow the session, not the directory.
 1. Before cloud, GitHub, registry or deploy commands, run `actas status --json`. Do not guess the profile from the directory name.
-2. If `mismatch` is true, this directory is matched to another profile: do not run cloud, GitHub or deploy commands here with this session's credentials.
+2. If `mismatch` is true, this directory is matched to another profile: do not run cloud, GitHub or deploy commands here with this session's credentials. If `profile` is null, no profile covers this directory: do not run them either, and tell the user (`hint` says what to add).
 3. To use another profile, run `actas exec <profile> --reason "<why>" -- <one command>`. It runs only if the user allowed that profile for agents.
 4. If actas prints a line starting with `actas-stop:`, it refused. Show the user the `ask_user` text exactly, then stop and wait. Do not retry, and do not change ACTAS, ACTAS_ROOT, HOME or the directory to get around it. The user runs the command in their own terminal, outside this session. Judge refusals by that line, not by the exit code: `actas exec` returns the command's own exit code.
 5. `actas-stop: code=expired`: ask the user to run `actas login <profile>` in their terminal. Never run `aws sso login`, `gcloud auth login`, `az login` or `gh auth login` yourself.
@@ -387,6 +387,8 @@ SKILL_ACTAS_HOWTO = """\
      profile. Ask the user to start you with `actas run`.
    - `profile` and `level`: the profile actas resolved (the session's, or the
      directory's when there is no session), and `readonly`, `standard` or `power`.
+     `profile` is null when no profile covers this directory and the session
+     has none: do not run remote commands; tell the user (`hint` says what to add).
    - `mismatch`: true when the current directory is matched to another profile
      (not when only the fallback profile covers it).
    - `agents_may_use`: profiles you may try with `actas exec` (same or lower
@@ -963,6 +965,10 @@ def check_value(v, spec, path, probs, v1=False, top=None):
                           f"path, got {v!r}")
         return None
     if kind == "bool":
+        if isinstance(v, str) and v.lower() in ("yes", "no", "on", "off", "y", "n"):
+            probs.error(path, f"expected true or false, got {v!r} (a version 2 manifest reads "
+                              "yes/no/on/off as text)")
+            return None
         return v if isinstance(v, bool) else bad("true or false")
     if kind == "strlist":
         v = [v] if isinstance(v, str) else v
@@ -981,6 +987,17 @@ def check_value(v, spec, path, probs, v1=False, top=None):
         if not isinstance(v, dict):
             return bad("a map")
         if kind == "map":         # claude.settings
+            def yaml11(x, at):
+                if isinstance(x, dict):
+                    for k2, y in x.items():
+                        yaml11(y, f"{at}.{k2}")
+                elif isinstance(x, list):
+                    for i, y in enumerate(x):
+                        yaml11(y, f"{at}[{i}]")
+                elif isinstance(x, str) and x.lower() in ("yes", "no", "on", "off", "y", "n"):
+                    probs.warn(at, f"{x!r} is passed to Claude as text, not a boolean; write true or false")
+            if not v1:
+                yaml11(v, path)
             mode = get_path(v, ("permissions", "defaultMode"))
             if mode in ("auto", "bypassPermissions"):
                 probs.error(f"{path}.permissions.defaultMode",
@@ -1294,6 +1311,11 @@ def merge(dst, src, layer, prov, path=()):
             continue
         p = path + (k,)
         old = dst.get(k)
+        if p in UNION and v is not None and not (isinstance(v, str) or (
+                isinstance(v, list) and all(isinstance(x, str) for x in v))):
+            # Combined lists (deny/ask rules, inherit, unset) take a string or
+            # a list of strings; a map here would silently replace them.
+            raise ManifestError(f"{'.'.join(p)} in {layer}: expected a list of strings, got {type_name(v)}")
         if v is None or (old is not None and not isinstance(v, dict) and p not in UNION):
             guard_sticky(old, p, layer, prov)
         if v is None:
@@ -2365,9 +2387,16 @@ def read_chain():
         def num(raw, off, size):
             return int.from_bytes(raw[off:off + size], sys.byteorder, signed=True)
 
+        # KERN_PROCARGS2 copies the *end* of the argument area into a buffer
+        # that is too small, so the buffer must hold ARGMAX bytes (CTL_KERN,
+        # KERN_ARGMAX); a reply that fills it is treated as unreadable and
+        # asked of ps instead.
+        am = sysctl((1, 8), 4)
+        argmax = max(num(am, 0, 4), 1 << 16) if am and len(am) == 4 else 1 << 20
+
         def argv0(pid):
-            raw = sysctl((1, 49, pid), 1 << 16)       # CTL_KERN, KERN_PROCARGS2: argc, exec path, argv
-            if not raw or len(raw) < 4 or num(raw, 0, 4) < 1:
+            raw = sysctl((1, 49, pid), argmax)        # CTL_KERN, KERN_PROCARGS2: argc, exec path, argv
+            if not raw or len(raw) < 4 or len(raw) >= argmax or num(raw, 0, 4) < 1:
                 return None
             rest = raw[4:].split(b"\0", 1)
             if len(rest) < 2:
@@ -2606,8 +2635,13 @@ def audit(action, prof=None, decision="allowed", reason=None, from_profile=None,
         warn(f"could not write the audit log ({e})")
 
 
-def clean_reason(text):
-    return "".join(ch for ch in str(text) if ch.isprintable())[:200] if text else None
+def clean_reason(text, names=()):
+    """The agent's --reason as shown: printable, credential values hidden
+    (redact_argv: the agent's shell may have expanded one), at most 200
+    characters."""
+    if not text:
+        return None
+    return redact_argv(["".join(ch for ch in str(text) if ch.isprintable())], names)[0][0][:200]
 
 
 def redact_argv(argv, names=()):
@@ -2653,8 +2687,8 @@ def ask_user(T, cmd, suggest, reason=None, human=False, names=()):
         lines = [f"Running {what} needs a typed confirmation.", "Run it yourself in an interactive terminal:"]
     else:
         lines = [f"The agent wants to run {what}."]
-        if clean_reason(reason):
-            lines.append(f'Agent\'s reason: "{clean_reason(reason)}"')
+        if clean_reason(reason, names):
+            lines.append(f'Agent\'s reason: "{clean_reason(reason, names)}"')
         lines.append("If you agree, run it yourself in a separate terminal (not inside the agent session):")
     lines.append("  " + shlex.join(suggest))
     if hidden:
@@ -4993,6 +5027,7 @@ def unknown_hint(sp, extra):
         opts = [o for act in sp._actions if act.help != argparse.SUPPRESS
                 for o in act.option_strings if o.startswith("--")]
         # run and exec: a stray flag is usually meant for the tool, so only a near miss counts
+        import difflib
         close = difflib.get_close_matches(flag, opts, n=1, cutoff=0.8 if sp.cmd in ("run", "exec") else 0.75)
         if close:
             return f"did you mean: {close[0]}?"
