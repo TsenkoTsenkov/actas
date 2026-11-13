@@ -358,7 +358,8 @@ chain + `claude.settings.permissions` lists. They reach Claude Code through the 
 Codex and Gemini do not get these rules in this release; Gemini gets `--approval-mode` from the
 level. The built-in secret rules also deny editing actas's own config and state directories, and
 reading the age key and the credential files of every module the manifest uses (for example
-`~/.aws/sso/cache`, `~/.config/gh/hosts.yml`, a Claude home's `.credentials.json`).
+`~/.aws/sso/cache`, `~/.config/gh/hosts.yml`, a Claude home's `.credentials.json`, Gemini's
+`~/.gemini/oauth_creds.json`).
 
 Rules are a seatbelt for an agent that follows instructions, not a security boundary. Narrowly
 scoped credentials are the boundary. See [agents.md](agents.md).
