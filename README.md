@@ -21,7 +21,7 @@ command.
 
 [![actas demo: one manifest of profiles and roles; two terminals side by side as different accounts; an agent refused a more powerful profile; the human approving it in their own terminal](docs/demo/actas-demo.gif)](docs/demo/actas-demo.mp4)
 
-_One manifest, two terminals running as two different accounts at once, any
+One manifest, two terminals running as two different accounts at once, any
 agent or CLI, `status --why`, and an agent that is refused a more powerful
 profile until you approve it in your own terminal.
 
