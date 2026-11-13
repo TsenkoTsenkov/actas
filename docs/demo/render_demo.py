@@ -200,7 +200,9 @@ def scene_manifest():
     s.widgets.append(t)
     y = [
         "[dim]version:[/] [o]2[/]",
-        "[b]defaults:[/] { [b]git[/]: { [b]name[/]: Ada Example, [b]email[/]: ada@example.com } }",
+        "[b]defaults:[/]",
+        "  [b]git[/]: { [b]name[/]: Ada Example, [b]email[/]: ada@example.com }",
+        "  [b]agents_may_use[/]: [g][\"*\"][/]      [dim]# agents may act as any profile at the same or a lower level[/]",
         "[b]roles:[/]                                      [dim]# reusable pieces, merged with use:[/]",
         "  [y]aws-ro[/]:    { [b]level[/]: readonly, [b]aws[/]: { [b]profile[/]: personal-readonly, [b]region[/]: eu-west-1 } }",
         "  [y]aws-power[/]: { [b]level[/]: power,    [b]aws[/]: { [b]profile[/]: personal-poweruser } }",
@@ -222,7 +224,7 @@ def scene_manifest():
         "    [b]github[/]: { [b]auth[/]: [g]\"gh:ada-client-a\"[/] }       [dim]# 2nd GitHub account, no auth switch[/]",
         "    [b]aws[/]:    { [b]profile[/]: client-a-dev, [b]region[/]: eu-west-1 }",
         "    [b]git[/]:    { [b]email[/]: ada@client-a.example }",
-        "  [c]oss[/]:      { [b]match[/]: ~/code/oss, [b]claude[/]: { [b]home[/]: work } }      [dim]# 2nd claude.ai subscription[/]",
+        "  [c]oss[/]:      { [b]match[/]: ~/code/oss, [b]claude[/]: { [b]home[/]: work }, [b]github[/]: { [b]auth[/]: [g]\"gh:ada-oss\"[/] } }",
         "  [c]client-b[/]: { [b]match[/]: ~/code/client-b, [b]tool[/]: codex, [b]gcp[/]: { [b]project[/]: client-b-dev } }",
     ]
     s.snap(500)
@@ -341,16 +343,16 @@ class Desktop:
         for i, col in enumerate([(255, 95, 86), (255, 189, 46), (39, 201, 63)]):
             d.ellipse([x + 14 + i * 20, y + 13, x + 26 + i * 20, y + 25], fill=col)
         d.text((x + 18, y + 50), "Code", font=UI_B, fill=C["d_text"])
-        for i, (name, active) in enumerate([("personal-site", True), ("infra", False), ("client-a-api", False)]):
+        for i, (name, active) in enumerate([("client-a-api", True), ("oss-handbook", False), ("personal-site", False)]):
             yy = y + 92 + i * 34
             if active:
                 d.rounded_rectangle([x + 10, yy - 6, x + 218, yy + 24], 8, fill=C["d_user"])
             d.text((x + 22, yy), name, font=UI_S, fill=C["d_text"] if active else C["d_dim"])
         d.text((x + 18, y + h - 34), "illustrative mock-up", font=UI_S, fill=C["d_dim"])
         # header
-        d.text((x + 256, y + 14), "personal-site", font=UI_B, fill=C["d_text"])
-        d.text((x + 256 + UI_B.getlength("personal-site") + 12, y + 17),
-               "~/code/personal/site · desktop app (no actas run)", font=UI_S, fill=C["d_dim"])
+        d.text((x + 256, y + 14), "client-a-api", font=UI_B, fill=C["d_text"])
+        d.text((x + 256 + UI_B.getlength("client-a-api") + 12, y + 17),
+               "~/code/client-a/api · desktop app (no actas run)", font=UI_S, fill=C["d_dim"])
         d.line([x + 230, y + 46, x + w, y + 46], fill=C["d_border"])
         # input
         d.rounded_rectangle([x + 256, y + h - 66, x + w - 24, y + h - 18], 14, fill=C["d_user"],
@@ -426,38 +428,54 @@ def stream(scene, desk, text, wps=14):
 
 
 def scene_desktop():
-    s = Scene("5|In the desktop app, an agent asks for stronger credentials and is refused")
+    s = Scene("5|Agents act as the profiles you allowed, and stop for the ones that need you")
     desk = Desktop()
     s.widgets.append(desk)
     s.snap(500)
-    desk.items.append({"kind": "user", "text": "The plan looks good. Go ahead and apply the terraform change to the staging bucket."})
+    desk.items.append({"kind": "user", "text": "Push the docs fix to my open-source handbook too, then apply "
+                                               "the reviewed terraform plan for my personal site."})
     s.snap(1300)
     stream(s, desk, "I'll check which credentials this session has first.")
     tool = {"kind": "tool", "cmd": "actas status --json", "out": [], "status": ""}
     desk.items.append(tool)
     s.snap(500)
-    for ln in ['{"ok": true, "session": {"profile": "personal", "source": "env"}, "profile": "personal",',
-               ' "level": "readonly", "identities": {"aws": {"profile": "personal-readonly", …}}, …}']:
+    for ln in ['{"ok": true, "session": {"profile": "client-a", "source": "env"}, "level": "standard",',
+               ' "agents_may_use": ["*"], "identities": {"github": "gh:ada-client-a", …}, …}']:
         tool["out"].append(ln)
         s.snap(250)
     tool["status"] = "exit 0"
     s.snap(900)
-    stream(s, desk, "This session is read-only. Applying needs the personal-power profile, so I'll request it.")
-    tool2 = {"kind": "tool", "cmd": "actas exec personal-power --reason \"apply reviewed plan\" -- terraform apply", "out": [], "status": ""}
+    stream(s, desk, "This is a client-a session. The handbook belongs to oss, which you let agents use, "
+                    "so I'll push as oss for that one command.")
+    tool2 = {"kind": "tool", "cmd": "actas exec oss --reason \"push docs fix\" -- git push -u origin docs-fix",
+             "out": [], "status": ""}
     desk.items.append(tool2)
+    s.snap(700)
+    for ln in ["To https://github.com/ada-oss/handbook.git",
+               " * [new branch]      docs-fix -> docs-fix",
+               "branch 'docs-fix' set up to track 'origin/docs-fix'."]:
+        tool2["out"].append(ln)
+        s.snap(300)
+    tool2["status"] = "exit 0 · as ada-oss"
+    s.snap(1100)
+    stream(s, desk, "Pushed. The terraform apply needs personal-power, so I'll request it.")
+    tool3 = {"kind": "tool", "cmd": "actas exec personal-power --reason \"apply reviewed plan\" -- terraform apply",
+             "out": [], "status": ""}
+    desk.items.append(tool3)
     s.snap(700)
     for ln in ["[r]actas-stop: code=needs_user reason=confirm profile=personal-power[/]",
                "actas: refused: personal-power requires a typed confirmation, which only",
                "a human in a terminal can give. … The agent wants to run `terraform apply`",
                "as actas profile personal-power (power; aws:personal-poweruser, gh:pat).",
-               "Agent's reason: \"apply reviewed plan\" … run it yourself in a separate",
-               "terminal:  [d_text]actas exec personal-power -- terraform apply[/]"]:
-        tool2["out"].append(ln)
+               "… run it yourself in a separate terminal:",
+               "  [d_text]actas exec personal-power -- terraform apply[/]"]:
+        tool3["out"].append(ln)
         s.snap(300)
-    tool2["status"] = "exit 3 · needs you"
+    tool3["status"] = "exit 3 · needs you"
     s.snap(1100)
-    stream(s, desk, "actas stopped me: personal-power needs your approval, and I can't grant that myself. "
-                    "If you agree, run this in your own terminal:\n[d_accent]actas exec personal-power -- terraform apply[/]\n"
+    stream(s, desk, "The docs fix is pushed as ada-oss. personal-power needs your approval, and I can't grant "
+                    "that myself. If you agree, run this in your own terminal:\n"
+                    "[d_accent]actas exec personal-power -- terraform apply[/]\n"
                     "I'll wait. I won't retry or try other credentials.")
     s.snap(4200)
 
@@ -486,8 +504,9 @@ def scene_human():
         "[g]Apply complete! Resources: 0 added, 1 changed, 0 destroyed.[/]",
         "",
     ], per=160, hold=500)
-    type_cmd(s, t, "tail -n 2 ~/.local/state/actas/audit.jsonl | jq -c '{profile,decision,agent:.agent.detected}'")
+    type_cmd(s, t, "tail -n 3 ~/.local/state/actas/audit.jsonl | jq -c '{profile,decision,agent:.agent.detected}'")
     out(s, t, [
+        '{"profile":"oss","decision":"allowed","agent":true}',
         '{"profile":"personal-power","decision":"refused-needs-user","agent":true}',
         '{"profile":"personal-power","decision":"confirmed-tty","agent":false}',
     ], per=250, hold=3800)

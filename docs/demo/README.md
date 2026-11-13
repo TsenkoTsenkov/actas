@@ -1,7 +1,7 @@
 # Demo recording
 
 `render_demo.py` draws the demo embedded at the top of the [README](../../README.md)
-(`actas-demo.gif`, about 78 seconds, 1280x760) and a sharper `actas-demo.mp4`, frame by
+(`actas-demo.gif`, about 83 seconds, 1280x760) and a sharper `actas-demo.mp4`, frame by
 frame. All names, accounts and URLs are dummy data. The terminal lines follow real `actas`
 output (`status`, `status --why`, the run badge, the `actas-stop:` refusal, the typed
 confirmation), shortened to fit: some suffixes such as `(pattern …)` are dropped and the run
@@ -9,8 +9,9 @@ badge is wrapped onto two lines. The desktop-app scene is an illustrative mock-u
 screenshot.
 
 Scenes: one manifest of profiles and roles; two terminals side by side as different accounts;
-any agent or CLI; `status --why`; an agent asking for a stronger profile and being refused; the
-human approving in their own terminal.
+any agent or CLI; `status --why`; an agent in a client-a session pushing as `oss` (allowed by
+`agents_may_use: ["*"]`) and then asking for a `confirm` profile and being refused; the human
+approving in their own terminal, with all three decisions in the audit log.
 
 ```sh
 pip install pillow          # and ffmpeg on PATH for the MP4
