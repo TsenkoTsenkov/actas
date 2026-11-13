@@ -190,16 +190,24 @@ PLAN_ORDER = ("aws", "gcp", "azure", "github", "git", "claude", "codex", "gemini
 # owned only when some layer uses claude.home, or aws.config_file / aws: null.
 OWNS = {k: v.split() for k, v in {
     "aws": "AWS_PROFILE AWS_DEFAULT_PROFILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY "
-           "AWS_SESSION_TOKEN AWS_REGION AWS_DEFAULT_REGION",
+           "AWS_SESSION_TOKEN AWS_REGION AWS_DEFAULT_REGION AWS_ROLE_ARN AWS_ROLE_SESSION_NAME "
+           "AWS_WEB_IDENTITY_TOKEN_FILE AWS_CONTAINER_CREDENTIALS_* AWS_CONTAINER_AUTHORIZATION_TOKEN*",
     "gcp": "CLOUDSDK_ACTIVE_CONFIG_NAME CLOUDSDK_CORE_PROJECT GOOGLE_CLOUD_PROJECT "
            "CLOUDSDK_COMPUTE_REGION CLOUDSDK_AUTH_IMPERSONATE_SERVICE_ACCOUNT "
            "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT CLOUDSDK_CONFIG GOOGLE_APPLICATION_CREDENTIALS "
-           "GOOGLE_CREDENTIALS GOOGLE_OAUTH_ACCESS_TOKEN",
+           "GOOGLE_CREDENTIALS GOOGLE_OAUTH_ACCESS_TOKEN CLOUDSDK_CORE_ACCOUNT "
+           "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
     "azure": "AZURE_CONFIG_DIR ARM_SUBSCRIPTION_ID ARM_TENANT_ID ARM_CLIENT_ID ARM_CLIENT_SECRET "
-             "ARM_USE_CLI ARM_USE_OIDC ARM_USE_MSI AZURE_DEFAULTS_LOCATION AZURE_DEFAULTS_GROUP",
+             "ARM_USE_CLI ARM_USE_OIDC ARM_USE_MSI AZURE_DEFAULTS_LOCATION AZURE_DEFAULTS_GROUP "
+             "ARM_ACCESS_KEY ARM_CLIENT_CERTIFICATE_PATH ARM_CLIENT_CERTIFICATE_PASSWORD ARM_OIDC_TOKEN "
+             "AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID "
+             "AZURE_CLIENT_CERTIFICATE_PATH AZURE_CLIENT_CERTIFICATE_PASSWORD AZURE_FEDERATED_TOKEN_FILE "
+             "AZURE_USERNAME AZURE_PASSWORD",
     "github": "GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST "
               "GH_CONFIG_DIR COPILOT_GITHUB_TOKEN",
-    "git": "",
+    # Git ranks these above the user.*/core.sshCommand config actas sets
+    # (GIT_SSH does not beat core.sshCommand, so it is left alone).
+    "git": "GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_SSH_COMMAND",
     "claude": "ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_CUSTOM_HEADERS "
               "ANTHROPIC_MODEL ANTHROPIC_DEFAULT_*_MODEL CLAUDE_CODE_SUBAGENT_MODEL "
               "CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY "
@@ -1155,6 +1163,17 @@ def merge_profile(name, cfg, check=True):
     if out["_v1"]:    # D-A: v1 left a module it did not configure alone
         out["_owned"] = [n for n in out["_owned"] if not (n.startswith("AWS_") and "aws" not in out
                                                           or n.startswith(("GH_", "GITHUB_")) and "github" not in out)]
+        # v1 set git's identity too: the shell's GIT_AUTHOR_*/GIT_COMMITTER_*
+        # would override it, so they go, but only for what the profile sets.
+        g = section(out, "git")
+        out["_owned"] += [f"GIT_{w}_{k.upper()}" for k in ("name", "email") if g.get(k)
+                          for w in ("AUTHOR", "COMMITTER")]
+    gh = out.get("github")
+    m = REF_RES["gh"].match(gh.get("auth") or "") if isinstance(gh, dict) else None
+    if m and not m.group(2) and gh.get("host") and gh["host"] != "github.com":
+        # github.host names the account's host: gh:ada with host ghe.corp.example
+        # is gh:ada@ghe.corp.example everywhere (token read, git helper, login).
+        gh["auth"] = f"{gh['auth']}@{gh['host']}"
     out["_cred_rules"] = cred_rules(cfg)
     if check:
         check_selectors(out)
@@ -1357,15 +1376,27 @@ def sops_data():
     return _SOPS["data"], _SOPS["err"]
 
 
+def gh_home_managed(path):
+    """A GH_CONFIG_DIR under STATE/homes/github: the `_off` home or another
+    profile's `github.home`, never where `gh auth login` stored gh: accounts."""
+    if not path:
+        return False
+    with suppress(OSError, ValueError):
+        p = os.path.realpath(expand(path))
+        base = os.path.realpath(str(STATE / "homes" / "github"))
+        return p == base or p.startswith(base.rstrip(os.sep) + os.sep)
+    return False
+
+
 def read_gh(user, host):
     gh = find_bin("gh")
     if not gh:
         return None, "gh not found (install the GitHub CLI)", None
     # gh: refs name an account in the user's own gh config: inside a session
-    # GH_CONFIG_DIR may point at actas's empty fail-closed home, and a token
-    # in the env would shadow the account.
+    # GH_CONFIG_DIR may point at actas's empty fail-closed home or another
+    # profile's managed home, and a token in the env would shadow the account.
     env = {k: v for k, v in os.environ.items() if not k.endswith("_TOKEN")}
-    if env.get("GH_CONFIG_DIR", "").rstrip("/").endswith("/homes/github/_off"):
+    if gh_home_managed(env.get("GH_CONFIG_DIR", "")):
         del env["GH_CONFIG_DIR"]
     r = run([gh, "auth", "token", "--user", user, "--hostname", host], timeout=30,
             stdin=subprocess.DEVNULL, env=env)
@@ -4004,7 +4035,7 @@ def cmd_doctor(a):
         res = assemble(profs[name], want_secrets=False) if name in profs else None
         gone = [k for k in res["scrubbed"] if k not in res["secret"]] if res else []   # refs are replaced
         if gone:
-            keep = (["`aws: inherit`"] if set(gone) & set(OWNS["aws"]) else []) + ["`inherit: [VAR]`"]
+            keep = (["`aws: inherit`"] if set(gone) & names_in(OWNS["aws"], gone) else []) + ["`inherit: [VAR]`"]
             add("shell", "info", f"actas run here ({name}) clears from this shell: {', '.join(gone)} "
                 f"(keep them with {' or '.join(keep)}" + (" after actas migrate)" if cfg.version == 1 else ")"))
     ledger = load_ledger()

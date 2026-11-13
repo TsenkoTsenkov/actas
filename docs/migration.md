@@ -51,7 +51,10 @@ working. Some behaviour changes anyway, mostly fixes:
   - with an `aws:` block: `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`,
     `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
     `AWS_REGION`, `AWS_DEFAULT_REGION`;
-  - with `github.account` or `secret_env.GH_TOKEN`: `GH_TOKEN`, `GITHUB_TOKEN`.
+  - with `github.account` or `secret_env.GH_TOKEN`: `GH_TOKEN`, `GITHUB_TOKEN`;
+  - with `github.name`: `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`; with
+    `github.email`: `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` (git would let
+    them override the identity the environment sets).
 
   An environment **without an `aws:` block keeps your shell's `AWS_PROFILE`**
   (and other `AWS_*`), exactly as v1 did; without a GitHub account it keeps
@@ -234,8 +237,10 @@ profiles:
   credential files. Add `permissions: { builtin: false }` to a profile to keep
   v1's "no rules".
 - **Wider scrubbing.** The shell's variables are cleared for every module the
-  manifest references (for example all Claude provider variables, and all
-  `CLOUDSDK_*` once you use `gcp`), in every profile. `migrate` writes
+  manifest references (for example all Claude provider variables, all
+  `CLOUDSDK_*` once you use `gcp`, and `GIT_AUTHOR_*`, `GIT_COMMITTER_*` and
+  `GIT_SSH_COMMAND` once some profile has a `git:` block, which `migrate`
+  writes for `github.name`/`email`), in every profile. `migrate` writes
   `aws: inherit` for environments that had no `aws:` block, so they keep your
   shell's `AWS_PROFILE` as in v1; change it to `aws: null` to isolate them
   (an empty AWS config, so the aws CLI cannot fall back to `[default]`).
