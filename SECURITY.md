@@ -190,8 +190,11 @@ sessions, `gh`, git, gcloud and the AWS pager are set to non-interactive.
   key, the gh keyring and the AWS SSO cache, call cloud CLIs with any profile,
   or edit actas's files.
 - **A determined agent.** Agent rules and refusals are a seatbelt. Detection
-  runs `/bin/ps` (or `/usr/bin/ps`; `PATH` only when neither exists), but a
-  process started outside the agent's process tree has no agent ancestry.
+  reads the ancestor processes from the kernel (`sysctl`) on macOS, with
+  `/bin/ps -p` for other users' processes, and runs `/bin/ps` (or
+  `/usr/bin/ps`; `PATH` only when neither exists) elsewhere or when that
+  read fails. Either way the names are what `ps` prints, but a process
+  started outside the agent's process tree has no agent ancestry.
   npm-installed agent CLIs show up as `node` and are detected through
   their environment markers only. Commands you type with `!` inside Claude
   Code run in the agent's context and count as agent commands; run elevated

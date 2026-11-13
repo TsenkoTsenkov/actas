@@ -493,7 +493,7 @@ the launched tool: `actas run client-a -- --resume`.
 | `actas init` | Create `~/.config/actas` with a starter manifest (and a `.sops.yaml` when an age key exists). Never overwrites. |
 | `actas run [profile] [-t claude\|codex\|gemini] [--login] [-- args]` | Launch the profile's tool with its identity. Warns about expired AWS credentials; logs in only with `--login`. |
 | `actas exec [profile] [--reason TEXT] -- cmd …` | Run any command with a profile's identity. Returns the command's own exit code. |
-| `actas status [profile] [--why] [--probe] [--json]` | Which profile applies and what it sets. `--why`: the `use:` chain and where each value comes from. `--probe`: check each login. Alias: `whoami`. |
+| `actas status [profile] [--why] [--probe] [--json]` | Which profile applies and what it sets. `--why`: the `use:` chain and where each value comes from. `--probe`: check each login (the checks run in parallel). Alias: `whoami`. |
 | `actas list [--check] [--json]` | All profiles and roles. `--check` also probes AWS and gateway secrets. |
 | `actas login [profile] [--module M] [--all]` | Log in: AWS SSO by default (plus Codex for Codex profiles). `--module gcp\|azure\|github\|codex` (for a `gh:` account, gh's previously active account is switched back afterwards). `--all`: one AWS login per SSO session or portal. |
 | `actas sync [profile] [--dry-run] [--clean [--force]] [--include-confirm]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what actas wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing). `--include-confirm` also writes `confirm` profiles. |

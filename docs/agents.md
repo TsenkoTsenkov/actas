@@ -432,9 +432,10 @@ get around it. Such code can:
 - run `git credential fill`, read the age key or the AWS SSO cache, and forge
   actas's state files or audit log;
 - start a process outside the agent's process tree (a launchd job, `nohup`
-  through another app), which actas cannot tell from a human's (actas runs
-  `/bin/ps` or `/usr/bin/ps`, so a fake `ps` on `PATH` does not hide the
-  ancestry);
+  through another app), which actas cannot tell from a human's (actas reads
+  the ancestry from the kernel on macOS, asking `/bin/ps` only about other
+  users' processes such as `login`, and runs `/bin/ps` or `/usr/bin/ps`
+  elsewhere, so a fake `ps` on `PATH` does not hide the ancestry);
 - forge or delete session records, including the copy under the passwd
   home;
 - outside an `actas run` session, set `ACTAS` or `cd` to another profile's
