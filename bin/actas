@@ -1331,16 +1331,21 @@ def sops_data():
     return _SOPS["data"], _SOPS["err"]
 
 
+def gh_own_env():
+    """os.environ for the user's own gh config, where gh: accounts live: inside
+    a session GH_CONFIG_DIR may point at actas's empty fail-closed home, and a
+    token in the env would shadow the account."""
+    env = {k: v for k, v in os.environ.items() if not k.endswith("_TOKEN")}
+    if env.get("GH_CONFIG_DIR", "").rstrip("/").endswith("/homes/github/_off"):
+        del env["GH_CONFIG_DIR"]
+    return env
+
+
 def read_gh(user, host):
     gh = find_bin("gh")
     if not gh:
         return None, "gh not found (install the GitHub CLI)", None
-    # gh: refs name an account in the user's own gh config: inside a session
-    # GH_CONFIG_DIR may point at actas's empty fail-closed home, and a token
-    # in the env would shadow the account.
-    env = {k: v for k, v in os.environ.items() if not k.endswith("_TOKEN")}
-    if env.get("GH_CONFIG_DIR", "").rstrip("/").endswith("/homes/github/_off"):
-        del env["GH_CONFIG_DIR"]
+    env = gh_own_env()
     r = run([gh, "auth", "token", "--user", user, "--hostname", host], timeout=30,
             stdin=subprocess.DEVNULL, env=env)
     tok = strip_nl(r.stdout) if r.returncode == 0 else ""
@@ -2420,6 +2425,33 @@ def aws_portals():
     return portals
 
 
+def aws_profile_names(path):
+    """The profile names an AWS config or credentials file defines. Reads
+    section headers only, never values."""
+    try:
+        lines = Path(path).read_text().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return set()
+    names = set()
+    for line in lines:
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            n = line[1:-1].strip()
+            if not n.startswith(("sso-session ", "services ")):
+                names.add(n[len("profile "):].strip() if n.startswith("profile ") else n)
+    return names
+
+
+def gh_logins(env=None):
+    """The (host, account) pairs `gh auth status` lists, or None without gh."""
+    gh = find_bin("gh")
+    if not gh:
+        return None
+    r = run([gh, "auth", "status"], stdin=subprocess.DEVNULL, timeout=30, env=env)
+    return list(dict.fromkeys(m.groups() for m in
+                              re.finditer(r"Logged in to (\S+) account (\S+)", r.stdout + r.stderr)))
+
+
 def gh_accounts(args=(), env=None):
     """The accounts `gh auth status [args]` lists, or None without gh."""
     gh = find_bin("gh")
@@ -2670,13 +2702,16 @@ def cmd_list(a):
         with ThreadPoolExecutor(max_workers=6) as pool:
             found = dict(zip(envs, pool.map(lambda k: probe_aws(k[0], envs[k])["status"], envs)))
         checked = {n: found[k] for n, (k, _) in jobs.items()}
+    secret_ok = {}       # a token shared by several profiles is read once (one op/keychain prompt)
     for name, prof in profs.items():
         row = list_row(name, prof)
         if a.check:
             row["check"] = {"aws": checked.get(name)}
             tok = section(prof, "claude").get("token")
             if row["provider"] == "gateway" and tok:
-                row["check"]["secret"] = "ok" if read_ref(tok, batch=True)[0] else "missing"
+                if tok not in secret_ok:
+                    secret_ok[tok] = bool(read_ref(tok, batch=True)[0])
+                row["check"]["secret"] = "ok" if secret_ok[tok] else "missing"
         rows.append(row)
     if a.json:
         roles = [{"name": n, "description": b.get("description"), "use": as_list(b.get("use")),
@@ -2896,12 +2931,21 @@ def cmd_login(a):
         if not portals:
             die("no profile uses an SSO profile from ~/.aws/config")
         info(f"{len(portals)} SSO portals for profiles: {', '.join(sorted(used))}")
+        failed = []
         for url, profiles in portals.items():
+            n = f"({len(profiles)} profiles)"
             if probe_aws(profiles[0], dict(os.environ))["status"] == "ok":
-                print(f"{paint('ok', 'green')}      {url}  ({len(profiles)} profiles)")
+                print(f"{paint('ok', 'green')}      {url}  {n}")
                 continue
-            print(f"{paint('login', 'yellow')}   {url}  ({len(profiles)} profiles)")
-            aws_login({"profile": profiles[0]})
+            print(f"{paint('login', 'yellow')}   {url}  {n}")
+            # Like the single-profile login: a failed step or a still-expired probe failed.
+            if (not aws_login({"profile": profiles[0]})
+                    or probe_aws(profiles[0], dict(os.environ))["status"] in ("expired", "missing")):
+                print(f"{paint('failed', 'red')}  {url}  {n}")
+                failed.append(url)
+        if failed:      # a human ran this (require_human): a plain error, not an agent stop
+            die(f"{len(failed)} of {len(portals)} SSO logins did not take: {', '.join(failed)} "
+                "(check the SSO session in your browser, then run: actas login --all)")
         return
     prof = resolve(a.env, a.cwd, cfg)
     audit("login", prof)
@@ -3684,7 +3728,7 @@ version: 2
 profiles:
   personal:
     match: ~/code/personal
-    git: { name: Your Name, email: you@example.com }
+    # git:    { name: Your Name, email: you@example.com }  # who commits here; unset: your global git config
     # github: { auth: "gh:your-login" }          # an account from `gh auth status`
     # aws:    { profile: my-sso-profile, region: eu-west-1 }
     # claude: { provider: gateway, base_url: "https://llm.example.com", token: "keychain:actas/gw" }
@@ -3694,8 +3738,38 @@ profiles:
 """
 
 
-INIT_DOC = {"version": 2, "profiles": {"personal": {
-    "match": "~/code/personal", "git": {"name": "Your Name", "email": "you@example.com"}}}}
+INIT_DOC = {"version": 2, "profiles": {"personal": {"match": "~/code/personal"}}}
+INIT_GIT_LINE = "    # git:    { name: Your Name, email: you@example.com }  # who commits here; unset: your global git config\n"
+
+
+def git_global_identity():
+    """(name, email) from the user's global git config, or None: the starter
+    uses it rather than a placeholder that would end up in commits."""
+    git = find_bin("git")
+    if not git:
+        return None
+    vals = []
+    for key in ("user.name", "user.email"):
+        r = run([git, "config", "--global", "--get", key], timeout=5, stdin=subprocess.DEVNULL)
+        v = r.stdout.strip() if r.returncode == 0 else ""
+        if not v or "\n" in v:
+            return None
+        vals.append(v)
+    return tuple(vals)
+
+
+def init_starter(ident):
+    """(YAML text, JSON-able doc) of the starter manifest. With an identity
+    the git line is filled in; without one it stays a comment, so nothing
+    writes a placeholder into commits."""
+    if not ident:
+        return INIT_MANIFEST, INIT_DOC
+    name, email = ident
+    q = json.dumps          # a JSON string is a YAML string; \u escapes keep the file ASCII
+    line = f"    git:    {{ name: {q(name)}, email: {q(email)} }}  # from your global git config\n"
+    doc = copy.deepcopy(INIT_DOC)
+    doc["profiles"]["personal"]["git"] = {"name": name, "email": email}
+    return INIT_MANIFEST.replace(INIT_GIT_LINE, line), doc
 
 
 def cmd_init(a):
@@ -3706,10 +3780,11 @@ def cmd_init(a):
     if MANIFEST.exists():
         info(f"exists, left alone: {MANIFEST}")
     else:
+        text, doc = init_starter(git_global_identity())
         if yaml_available():
-            write_private(MANIFEST, INIT_MANIFEST)
+            write_private(MANIFEST, text)
         else:       # F19: a starter this machine can read back
-            write_private(MANIFEST, json.dumps(INIT_DOC, indent=2) + "\n")
+            write_private(MANIFEST, json.dumps(doc, indent=2) + "\n")
             info(f"no YAML parser here, so the starter is JSON (also valid YAML); for YAML, {YAML_HINT}")
         print(f"{paint('wrote', 'green')} {MANIFEST}")
     sops_cfg = ROOT / ".sops.yaml"
@@ -3814,12 +3889,86 @@ def manifest_checks(cfg):
     return out, profs
 
 
+EXAMPLE_DOMAINS = ("example.com", "example.net", "example.org", "example", "invalid")
+
+
+def placeholder_git(g):
+    """A starter or documentation git identity: the init placeholder's name, or
+    an email at a reserved example domain (RFC 2606), as in the README."""
+    dom = str(g.get("email") or "").lower().rpartition("@")[2]
+    return g.get("name") == "Your Name" or bool(g.get("email")) and any(
+        dom == d or dom.endswith("." + d) for d in EXAMPLE_DOMAINS)
+
+
+def profile_refs(profs):
+    """scheme -> {ref: [(profile, field path)]} over the merged profiles' ref
+    fields (env holds literals, so it is skipped)."""
+    out = {}
+    for name, prof in profs.items():
+        body = {k: v for k, v in prof.items() if not str(k).startswith("_") and k != "env"}
+        for path, ref in iter_refs(body):
+            out.setdefault(ref_scheme(ref), {}).setdefault(ref, []).append((name, path))
+    return out
+
+
+def some(uses):
+    """profiles.x.field, or profiles.x.field and N more, for a list of (profile, path)."""
+    first = f"profiles.{uses[0][0]}.{uses[0][1]}"
+    return first + (f" and {len(uses) - 1} more" if len(uses) > 1 else "")
+
+
+def ref_checks(profs, refs, logins):
+    """doctor: are the gh: accounts the manifest names logged in, do its aws
+    profiles exist, can its keychain: and cmd: refs run here? Local lookups
+    only: no secret is read and nothing goes over the network."""
+    out = []
+    have = {(h.lower(), u.lower()) for h, u in logins or ()}
+    for ref, uses in sorted(refs.get("gh", {}).items()):
+        user, host = REF_RES["gh"].match(ref).groups()
+        host = host or "github.com"
+        if logins is not None and (host.lower(), user.lower()) not in have:
+            own = next((n for n, path in uses if path == "github.auth"), None)
+            fix = f"actas login {own} --module github" if own else f"gh auth login --hostname {host}"
+            out.append(("refs", "warn", f"{ref} ({some(uses)}) is not an account logged in to gh "
+                                        f"on {host}; run: {fix}"))
+    known, missing = {}, {}
+    for name, prof in profs.items():
+        a = prof.get("aws")
+        if not isinstance(a, dict) or not a.get("profile"):
+            continue
+        env = child_env(assemble(prof, want_secrets=False))     # the profile's own AWS_CONFIG_FILE
+        files = (env.get("AWS_CONFIG_FILE") or str(HOME / ".aws" / "config"),
+                 env.get("AWS_SHARED_CREDENTIALS_FILE") or str(HOME / ".aws" / "credentials"))
+        if files not in known:
+            known[files] = aws_profile_names(files[0]) | aws_profile_names(files[1])
+        if a["profile"] not in known[files]:
+            missing.setdefault((a["profile"], files), []).append(name)
+    for (pr, files), names in missing.items():
+        out.append(("refs", "warn", f"aws profile {pr} ({', '.join(names)}) is not in {tilde(files[0])} "
+                                    f"or {tilde(files[1])}" + did_you_mean(pr, known[files])
+                                    + f"; create it with: aws configure sso --profile {pr}"))
+    kc = [u for uses in refs.get("keychain", {}).values() for u in uses]
+    if kc and sys.platform != "darwin":
+        out.append(("refs", "warn", f"keychain: refs ({some(kc)}) need macOS; "
+                                    "here use an op://, sops: or cmd: ref"))
+    elif kc and not find_bin("security"):
+        out.append(("refs", "warn", f"security not found (needed for keychain: refs, {some(kc)})"))
+    for ref, uses in sorted(refs.get("cmd", {}).items()):
+        with suppress(ValueError, IndexError, TypeError):
+            exe = json.loads(ref[4:])[0]
+            found = (os.path.isfile(exe) and os.access(exe, os.X_OK)) if "/" in exe else find_bin(exe)
+            if not found:
+                out.append(("refs", "warn", f"{exe} not found (needed for the cmd: ref in {some(uses)})"))
+    return out
+
+
 def cmd_doctor(a):
     checks = []
 
     def add(name, status, detail):
         checks.append({"name": name, "status": status, "detail": detail})
 
+    profs = {}
     if not MANIFEST.exists():
         add("manifest", "error", f"missing: {MANIFEST} (run: actas init)")
     else:
@@ -3833,21 +3982,60 @@ def cmd_doctor(a):
                                  for lvl, p, m in probs.items] or summary)
         if status != "ok":
             checks[-1]["summary"] = summary
-    add("secrets", "ok" if SECRETS.exists() else "optional-missing",
-        str(SECRETS) if SECRETS.exists() else f"{SECRETS} (needed only for sops: refs)")
+    # What the manifest needs here: a missing tool for a ref in use is a warning.
+    refs = profile_refs(profs)
+    uses = {s: [u for us in refs.get(s, {}).values() for u in us] for s in ("sops", "gh", "op")}
+    uses["aws"] = [(n, "aws.profile") for n, pr in profs.items()
+                   if isinstance(pr.get("aws"), dict) and pr["aws"].get("profile")]
+    for t in ("codex", "gemini"):
+        uses[t] = [(n, "tool") for n, pr in profs.items() if pr.get("tool") == t]
+
+    def needed(why, scheme):
+        return f"needed for {why}, e.g. {some(uses[scheme])}" if uses.get(scheme) else f"needed for {why}"
+
+    if SECRETS.exists() or not uses["sops"]:
+        add("secrets", "ok" if SECRETS.exists() else "optional-missing",
+            str(SECRETS) if SECRETS.exists() else f"{SECRETS} (needed only for sops: refs)")
+    else:
+        add("secrets", "warn", f"{SECRETS} is missing ({needed('sops: refs', 'sops')}; "
+                               "the first `actas secret set sops:<group>/<key>` creates it)")
     for tool, why in (("claude", "actas run"), ("aws", "aws: blocks"), ("gh", "gh: accounts"),
-                      ("sops", "sops: refs"), ("age", "creating age keys")):
+                      ("sops", "sops: refs"), ("age", "creating age keys"),
+                      ("op", "op:// refs"), ("codex", "tool: codex"), ("gemini", "tool: gemini")):
+        if tool in ("op", "codex", "gemini") and not uses[tool]:
+            continue                                # listed only when the manifest uses them
         p = find_bin(tool)
-        add(tool, "ok" if p else ("warn" if tool == "claude" else "optional-missing"),
-            p or f"not installed (needed for {why})")
-    key = age_key_file()
-    add("age key", "ok" if key else "optional-missing", key or "none (needed for sops: refs)")
-    accts = gh_accounts()
-    if accts is not None:
+        add(tool, "ok" if p else ("warn" if tool == "claude" or uses.get(tool) else "optional-missing"),
+            p or f"not installed ({needed(why, tool)})")
+    key, sops_cfg, uses_age = age_key_file(), ROOT / ".sops.yaml", True
+    with suppress(OSError):         # sops may decrypt with another key type (PGP, KMS)
+        uses_age = not sops_cfg.exists() or "age" in sops_cfg.read_text(errors="replace")
+    if key or not (uses["sops"] and uses_age):
+        add("age key", "ok" if key else "optional-missing", key or "none (needed for sops: refs)")
+    else:
+        add("age key", "warn", f"none ({needed('sops: refs', 'sops')}; "
+                               "create one: age-keygen -o ~/.config/sops/age/keys.txt)")
+    logins = gh_logins(gh_own_env())       # the user's own gh accounts, also inside a session
+    if logins is not None:
+        accts = list(dict.fromkeys(u for _, u in logins))
         add("gh accts", "ok" if accts else "warn", ", ".join(accts) or "none logged in")
     portals = aws_portals()
     add("aws sso", "ok", f"{len(portals)} SSO logins, {sum(len(v) for v in portals.values())} profiles")
     if MANIFEST.exists() and not cfg.problems.errors():
+        for name, status, detail in ref_checks(profs, refs, logins):
+            add(name, status, detail)
+            if detail.startswith("gh:"):        # a referenced account is not logged in
+                for c in checks:
+                    if c["name"] == "gh accts":
+                        c["status"] = "warn"
+        idents = {}
+        for n, pr in profs.items():
+            g = section(pr, "git")
+            if placeholder_git(g):
+                idents.setdefault((g.get("name"), g.get("email")), []).append(n)
+        for (gname, email), names in idents.items():
+            add("identity", "warn", f"git identity {gname or '?'} <{email or '?'}> in {', '.join(names)} "
+                f"is a placeholder (an example address): commits there would use it; edit {tilde(MANIFEST)}")
         bare = [n for n, pr in profs.items() if "aws" not in pr and ("aws",) not in pr["_nulled"]]
         creds = os.environ.get("AWS_SHARED_CREDENTIALS_FILE") or str(HOME / ".aws" / "credentials")
         where = [tilde(f) for f in (os.environ.get("AWS_CONFIG_FILE") or str(HOME / ".aws" / "config"), creds)
@@ -4212,7 +4400,7 @@ def build_parser():
     st.set_defaults(fn=cmd_status)
 
     l = sub.add_parser("list", help="list profiles")  # noqa: E741
-    l.add_argument("--check", action="store_true", help="also probe AWS and secret availability")
+    l.add_argument("--check", action="store_true", help="also probe AWS logins and gateway tokens")
     l.add_argument("--json", action="store_true", help="machine-readable output")
     l.set_defaults(fn=cmd_list)
 
@@ -4226,7 +4414,8 @@ def build_parser():
     lo = sub.add_parser("login", help="log in to a profile's accounts (default: AWS SSO, Codex)")
     lo.add_argument("env", nargs="?", metavar="profile")
     lo.add_argument("--all", action="store_true",
-                    help="one AWS login per SSO session or portal used by any profile")
+                    help="one AWS login per SSO session or portal used by any profile; "
+                         "exits 1 if any login fails")
     lo.add_argument("--module", action="append", choices=tuple(LOGIN_BINS),
                     help="log in to this module (repeatable)")
     lo.add_argument("--adc", action="store_true", help="gcp: also application-default login")

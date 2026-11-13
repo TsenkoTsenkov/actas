@@ -68,7 +68,7 @@ still decides whether you may use it.
 | `actas status --json` (alias `whoami`) | The session's profile, the cwd's profile, `mismatch`, identities, agent signals |
 | `actas status --why` | The `use:` chain, where each value comes from, and how many agent rules apply (`--json` lists them) |
 | `actas status --probe` | Also checks each login over the network. Exits 4 with `actas-stop: code=expired` if one has expired. |
-| `actas list [--json]`, `actas list --check` | Profiles and roles; `--check` also probes AWS and secret availability (status only, never values) |
+| `actas list [--json]`, `actas list --check` | Profiles and roles; `--check` also probes AWS logins and gateway tokens (status only, never values) |
 | `actas doctor` (without `--fix`) | Tool and manifest checks. `actas doctor --fix` changes directory modes: a human runs it. |
 | `actas help`, `actas help <cmd>`, `actas instructions` | Static text |
 | `actas desktop [profile]`, `actas migrate` (no `--write`) | Print setup text. Refs are names, never values. |

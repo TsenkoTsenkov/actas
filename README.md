@@ -146,8 +146,9 @@ this repository. Keep it private.
 This takes about a minute.
 
 **1. Create the config directory.** `actas init` writes a short, commented
-version 2 starter to `~/.config/actas/environments.yaml`. It never overwrites
-an existing file, and it works without sops. It writes YAML when PyYAML or
+version 2 starter to `~/.config/actas/environments.yaml`. Its git identity
+comes from your global git config; without one, the `git:` line stays
+commented out. It never overwrites an existing file, and it works without sops. It writes YAML when PyYAML or
 `yq` is available (the uv/pipx install includes PyYAML) and JSON otherwise.
 
 ```bash
@@ -193,7 +194,7 @@ On Linux, use a `sops:`, `op://` or `cmd:` ref instead (see
 
 ```bash
 actas status --cwd ~/code/client-a    # which profile applies there, and what it sets
-actas doctor                          # tools, manifest problems, leaking shell exports
+actas doctor                          # tools, manifest problems, missing logins, leaking shell exports
 cd ~/code/client-a && actas run       # Claude Code as client-a
 ```
 
@@ -490,14 +491,14 @@ the launched tool: `actas run client-a -- --resume`.
 
 | Command | What it does |
 |---|---|
-| `actas init` | Create `~/.config/actas` with a starter manifest (and a `.sops.yaml` when an age key exists). Never overwrites. |
+| `actas init` | Create `~/.config/actas` with a starter manifest (git identity from your global git config, if set) and a `.sops.yaml` when an age key exists. Never overwrites. |
 | `actas run [profile] [-t claude\|codex\|gemini] [--login] [-- args]` | Launch the profile's tool with its identity. Warns about expired AWS credentials; logs in only with `--login`. |
 | `actas exec [profile] [--reason TEXT] -- cmd …` | Run any command with a profile's identity. Returns the command's own exit code. |
 | `actas status [profile] [--why] [--probe] [--json]` | Which profile applies and what it sets. `--why`: the `use:` chain and where each value comes from. `--probe`: check each login. Alias: `whoami`. |
 | `actas list [--check] [--json]` | All profiles and roles. `--check` also probes AWS and gateway secrets. |
-| `actas login [profile] [--module M] [--all]` | Log in: AWS SSO by default (plus Codex for Codex profiles). `--module gcp\|azure\|github\|codex` (for a `gh:` account, gh's previously active account is switched back afterwards). `--all`: one AWS login per SSO session or portal. |
+| `actas login [profile] [--module M] [--all]` | Log in: AWS SSO by default (plus Codex for Codex profiles). `--module gcp\|azure\|github\|codex` (for a `gh:` account, gh's previously active account is switched back afterwards). `--all`: one AWS login per SSO session or portal; exits 1 and names the portals whose login failed. |
 | `actas sync [profile] [--dry-run] [--clean [--force]] [--include-confirm]` | Write non-secret settings into each matching repo's `.claude/settings.local.json`, for bare `claude`, IDEs and Desktop. `--clean` also removes what actas wrote in files no profile syncs any more (`--force` for files that hide `~/.claude/settings.json`'s provider routing). `--include-confirm` also writes `confirm` profiles. |
-| `actas doctor [--strict] [--json] [--fix]` | Check tools, the manifest, file modes, and the shell exports `run` would clear. `--fix` only tightens actas's own directories to 0700. |
+| `actas doctor [--strict] [--json] [--fix]` | Check tools, the manifest, file modes, and the shell exports `run` would clear. Warns when a `gh:` account the manifest names is not logged in, an `aws.profile` is not in `~/.aws/config` or `~/.aws/credentials`, a tool a ref or `tool:` needs (sops, age key, op, codex, ...) is missing, or a git identity is a placeholder (`you@example.com`). It never reads a secret. `--fix` only tightens actas's own directories to 0700. |
 
 **Advanced**
 

@@ -668,6 +668,13 @@ never names (`GITLAB_TOKEN` exported in your shell profile, …) are left alone;
   `codex.home` (a warning), `permissions.builtin: false` (an info line naming the layer), a login
   found in an `_off` home (an error), a config directory readable by others, and, when the
   manifest uses Gemini, `.env` files Gemini CLI would load.
+- `doctor` checks what the manifest names against this machine, without reading a secret or
+  going over the network: a `gh:` account that `gh auth status` does not list, an `aws.profile`
+  in neither the AWS config file (the profile's own `config_file`, if set) nor the credentials
+  file, a missing tool for a ref in use (`sops`, `secrets.enc.yaml` and an age key for `sops:`,
+  `op` for `op://`, macOS `security` for `keychain:`, a `cmd:` program) or for `tool: codex` /
+  `gemini`, and a git identity at a reserved example domain (`example.com`, `*.example`) or the
+  name `Your Name`. All are warnings, so `doctor --strict` fails on them.
 - The manifest may be YAML (needs PyYAML or `yq`) or JSON (no dependency).
 
 ### Files actas uses
