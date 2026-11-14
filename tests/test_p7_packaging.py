@@ -141,10 +141,15 @@ class SameWithEveryParser(Sandbox):
                 with mock.patch.dict(sys.modules, {"yaml": None}):
                     with_yq = self.m.parse_text(text, "x")
                 self.assertEqual(with_pyyaml, with_yq)
+        # v1 goes through plain yq, as the v1 binary did. yq itself changed how
+        # it reads 0755 (493 before v4.40ish, 755 after), so compare with it.
         v1 = "version: 1\nenvironments:\n  a:\n    env: {PORT: 0755, N: 7}\n"
+        plain = json.loads(subprocess.run([str(self.fakebin / "yq"), "-o", "json", "."], input=v1,
+                                          capture_output=True, text=True, check=True).stdout)
+        self.assertIn(plain["environments"]["a"]["env"]["PORT"], (493, 755))
         with mock.patch.dict(sys.modules, {"yaml": None}):
             self.assertEqual(self.m.parse_text(v1, "x")["environments"]["a"]["env"],
-                             {"PORT": 493, "N": 7})                      # yq, as before
+                             plain["environments"]["a"]["env"])
 
 
 class Version(Sandbox):
