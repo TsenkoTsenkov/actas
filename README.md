@@ -21,10 +21,10 @@ command.
 
 [![actas demo: one manifest of profiles and roles; two terminals side by side as different accounts; an agent acting as another allowed profile and refused a more powerful one; the human approving it in their own terminal](docs/demo/actas-demo.gif)](docs/demo/actas-demo.mp4)
 
-_One manifest, two terminals running as two different accounts at once, any
-agent or CLI, `status --why`, and an agent that pushes as another profile you allowed but
-is refused a more powerful one until you approve it in your own terminal.
-Dummy data, about 80 seconds; click it for the sharper [MP4 version](docs/demo/actas-demo.mp4) · [how the demo is made](docs/demo/README.md)_
+One manifest, two terminals running as two different accounts at once, any
+agent or CLI, `status --why`, and an agent that pushes as another profile you
+allowed but is refused a more powerful one until you approve it in your own
+terminal.
 
 ```console
 $ cd ~/code/client-a/api
