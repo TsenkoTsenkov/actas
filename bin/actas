@@ -17,7 +17,6 @@ import copy
 import fnmatch
 import json
 import os
-import pwd
 import re
 import shlex
 import shutil
@@ -26,6 +25,12 @@ import sys
 import time
 from contextlib import suppress
 from pathlib import Path
+
+try:
+    import pwd
+except ImportError:                  # native Windows: no POSIX passwd database
+    sys.exit("actas: native Windows is not supported; install and run actas inside WSL "
+             "(https://learn.microsoft.com/windows/wsl/install)")
 
 __version__ = "2.0.0b1"
 BUILD = "script"  # the package build rewrites this to "package" (SPEC 5.4)
@@ -811,7 +816,12 @@ def load(strict=True, quiet=False):
     if key in _LOADED:
         return _LOADED[key]
     try:
-        cfg = build_config(parse_text(path.read_text(), str(path)))
+        try:
+            text = path.read_text()
+        except UnicodeDecodeError as e:
+            raise ManifestError(f"{path}: not valid UTF-8 ({e.reason} at byte {e.start}); "
+                                "save it as UTF-8") from None
+        cfg = build_config(parse_text(text, str(path)))
     except ManifestError as e:
         if strict:
             die(str(e))
@@ -1385,6 +1395,9 @@ def merge_profile(name, cfg, check=True):
         out["_owned"] += [f"GIT_{w}_{k.upper()}" for k in ("name", "email") if g.get(k)
                           for w in ("AUTHOR", "COMMITTER")]
     gh = out.get("github")
+    if isinstance(gh, dict) and gh.get("host") and not re.fullmatch(_HOST, str(gh["host"])):
+        raise ManifestError(f"profile {name}: github.host {gh['host']!r} is not a host name "
+                            "(write it without https:// or a path, e.g. ghe.example.com)")
     m = REF_RES["gh"].match(gh.get("auth") or "") if isinstance(gh, dict) else None
     if m and not m.group(2) and gh.get("host") and gh["host"] != "github.com":
         # github.host names the account's host: gh:ada with host ghe.corp.example
@@ -2858,7 +2871,7 @@ def aws_sections(path=None):
     """~/.aws/config (or $AWS_CONFIG_FILE, or path) as a list of {"_name": ..., key: value}."""
     cfg = Path(path or os.environ.get("AWS_CONFIG_FILE") or HOME / ".aws" / "config")
     try:
-        lines = cfg.read_text().splitlines()
+        lines = cfg.read_text(errors="replace").splitlines()
     except OSError:
         return []
     sections, cur = [], None
@@ -3128,6 +3141,11 @@ def cmd_shell(a):
     res = assemble(prof, want_secrets=not no_secrets, git_base=0 if fmt == "env" else None,
                    ctx={"materialize": True, "human_shell": human})
     env, gone = res["env"], res["unset"]
+    bad = [k for k in list(env) + list(gone) if not ENV_RE.fullmatch(k)]
+    if bad:              # names from the parent environment can hold any character but "="
+        warn("left out of the output (not a valid variable name): " + ", ".join(map(repr, bad)))
+        env = {k: v for k, v in env.items() if k not in bad}
+        gone = [k for k in gone if k not in bad]
     if fmt == "env" and env.get("ANTHROPIC_BASE_URL"):
         info(f"ANTHROPIC_BASE_URL comes without a credential here: Claude gets the gateway token "
              f"only through apiKeyHelper (actas run, or actas sync for a repo), or in Desktop "
@@ -3166,7 +3184,7 @@ def cmd_list(a):
         for name in sorted(cfg.profiles):
             print(name)
         return
-    rows, (profs, errors) = [], all_profiles(cfg, names=sorted(cfg.profiles))
+    rows, (profs, errors) = [], all_profiles(cfg, check=True, names=sorted(cfg.profiles))
     for name, e in errors.items():
         warn(f"profile {name}: {e}")
     checked = {}
@@ -3612,7 +3630,7 @@ LEDGER = STATE / "sync-ledger.json"
 V1_ADOPT = {"env": ["ANTHROPIC_BASE_URL", "AWS_PROFILE", "AWS_REGION"],
             "top": ["apiKeyHelper", "awsAuthRefresh"]}
 # Env names whose replaced value the ledger never copies, only that one existed.
-CRED_NAME_RE = re.compile(r"token|key|secret|pass|credential|auth", re.I)
+LEDGER_CRED_RE = re.compile(r"token|key|secret|pass|credential|auth", re.I)
 # Helper and hook commands this tool wrote, under its name or the pre-rename
 # `ccenv` (legacy: v1's `ccenv secret ENV KEY`, v2's `.../bin/ccenv ...`).
 TOOL_SECRET_RE = re.compile(r"(?:actas|ccenv)'?\s+secret\b")
@@ -3847,7 +3865,7 @@ def put_fragment(data, new):
     for k, cur in old.items() if not {"ACTAS", "CCENV"} & set(env) else ():
         if k.startswith(("env.ACTAS", "env.CCENV")):
             continue
-        if k.startswith("env.") and CRED_NAME_RE.search(k[4:]):
+        if k.startswith("env.") and LEDGER_CRED_RE.search(k[4:]):
             own.setdefault("replaced", []).append(k)
         else:
             own.setdefault("prev", {})[k] = cur
@@ -4240,7 +4258,7 @@ def setup_write(dest, text, ours, a):
     """Write one `actas setup` file: say so when it is current, never write
     through a symlink, and replace an existing file only when it is an
     earlier copy from actas (ours(old_text)) or with --force."""
-    with suppress(OSError):
+    with suppress(OSError, UnicodeDecodeError):
         if dest.read_text() == text:
             print(f"up to date: {tilde(dest)}")
             return
@@ -4291,7 +4309,7 @@ def cmd_setup(a):
     dest = Path(a.file).expanduser().absolute() if a.file else direnv_lib()
     setup_write(dest, DIRENVRC, lambda old: "use_actas()" in old, a)
     rc = dest.parent.parent / "direnvrc"
-    with suppress(OSError):
+    with suppress(OSError, UnicodeDecodeError):
         if not a.file and "use_actas()" in rc.read_text():
             info(f"{tilde(rc)} also defines use_actas (an earlier copy); remove it there, so the "
                  "copy `actas setup direnv` keeps current is the only one")

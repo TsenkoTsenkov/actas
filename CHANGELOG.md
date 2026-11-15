@@ -21,6 +21,21 @@ Code. **v1 manifests keep working unchanged** (see
   a stable tag commits an updated `Formula/actas.rb`.
 - A Buy Me a Coffee link (`.github/FUNDING.yml`, README).
 
+### Fixed (audit)
+
+- An invalid `github.host` (such as a URL) is a manifest error instead of a
+  traceback in `status` and a malformed `gh:` ref everywhere else.
+- `actas list` and `list --check` report a profile doctor rejects instead of
+  crashing on it.
+- `actas shell` leaves out inherited variable names that are not valid shell
+  names, so they can never inject commands into `eval` or direnv.
+- A manifest that is not UTF-8 is a one-line error; a non-UTF-8 `~/.aws/config`
+  no longer crashes `doctor`.
+- `redact_argv` again hides only credential-like variables: a second
+  definition of its pattern also hid values such as `SSH_AUTH_SOCK`, which
+  changed the commands shown in ask_user text.
+- On native Windows, actas says to use WSL instead of failing on import.
+
 ### Renamed to actas
 
 ccenv is now **actas**: `actas exec client-a -- terraform apply` acts as
