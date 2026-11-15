@@ -1,12 +1,13 @@
-# Packaging for `uv tool install` and `pipx install` from git:
+# Packaging for `uv tool install` and `pipx install`, from PyPI (published by
+# the release workflow) or from git:
 #
+#   uv tool install actas            # or: pipx install actas
 #   uv tool install git+https://github.com/TsenkoTsenkov/actas
-#   pipx install git+https://github.com/TsenkoTsenkov/actas
 #
 # bin/actas stays the single source of truth. The wheel build (hatch_build.py)
 # copies it to the module `actas_cli` and changes only the line
 # `BUILD = "script"` to `BUILD = "package"`. The version is read from
-# `__version__` in bin/actas. Nothing is published to PyPI. The package also
+# `__version__` in bin/actas. The package also
 # installs a deprecated `ccenv` command (the name before the rename).
 # bin/actas carries the Claude Code skills and the direnv function, so the
 # wheel has them without data files: `actas setup skill`, `actas setup direnv`.
@@ -24,11 +25,19 @@ license = "MIT"
 requires-python = ">=3.9"
 # Optional for the single-file install; the package always gets it.
 dependencies = ["PyYAML>=6"]
+keywords = ["credentials", "aws", "gcp", "azure", "github", "claude", "codex", "gemini", "ai-agents", "direnv", "sops"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
 ]
 
 [project.scripts]
@@ -39,6 +48,10 @@ ccenv = "actas_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/TsenkoTsenkov/actas"
+Documentation = "https://github.com/TsenkoTsenkov/actas#readme"
+Changelog = "https://github.com/TsenkoTsenkov/actas/blob/main/CHANGELOG.md"
+Issues = "https://github.com/TsenkoTsenkov/actas/issues"
+Funding = "https://buymeacoffee.com/tsenkotsenkov"
 
 [tool.hatch.version]
 path = "bin/actas"

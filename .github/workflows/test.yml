@@ -58,7 +58,8 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3 (no floating v10 tag)
       - run: uv run --no-project --python 3.9 python -m unittest discover -s tests -v
 
-  # The uv/pipx package and install.sh. Nothing is published.
+  # The uv/pipx package, the Homebrew formula and install.sh. Nothing is
+  # published here; release.yml publishes on a tag.
   package:
     runs-on: ubuntu-latest
     steps:
@@ -68,6 +69,8 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3 (no floating v10 tag)
       - name: Build the sdist and wheel
         run: uv build
+      - name: The package metadata renders on PyPI
+        run: uvx twine check --strict dist/*
       - name: The packaged command reports the script's version
         run: |
           # "actas X.Y.Z (...)": the part in brackets names the install.
@@ -86,3 +89,5 @@ jobs:
         run: |
           sh -n install.sh
           shellcheck -s sh install.sh
+      - name: The Homebrew formula is valid Ruby
+        run: ruby -c Formula/actas.rb

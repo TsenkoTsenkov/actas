@@ -164,6 +164,15 @@ class InstallScript(Isolated):
         self.assertIn("https://github.com/TsenkoTsenkov/actas/releases/latest/download/actas",
                       self.urls())
 
+    def test_piped_into_sh(self):
+        """The README one-liner: `curl -fsSL .../install.sh | sh -s -- ARGS`."""
+        r = subprocess.run(["sh", "-s", "--", "--version", "v2.0.0b1"], input=INSTALL_SH.read_text(),
+                           cwd=str(self.tmp), capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.dest.read_bytes(), self.payload)
+        self.assertIn("https://github.com/TsenkoTsenkov/actas/releases/download/v2.0.0b1/actas",
+                      self.urls())
+
     def test_given_version_and_upgrade_in_place(self):
         self.dest.parent.mkdir(parents=True)
         self.dest.write_text("old")

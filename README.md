@@ -3,6 +3,7 @@
 [![test](https://github.com/TsenkoTsenkov/actas/actions/workflows/test.yml/badge.svg)](https://github.com/TsenkoTsenkov/actas/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
+[![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/tsenkotsenkov)
 
 **actas — act as the right identity (LLM provider, cloud accounts, GitHub, git, secrets) for every
 project, in every terminal and agent.**
@@ -53,7 +54,7 @@ $ actas run -t codex                              # another agent, same identity
 
 > [!NOTE]
 > actas 2.0 is in beta: `main` is `2.0.0b1` and no release is tagged yet, so
-> install from git (below). v1 manifests keep working unchanged; see
+> install from git (see [Install](#install)). v1 manifests keep working unchanged; see
 > [Upgrading from v1](#upgrading-from-v1). actas was called ccenv until 2.0, and
 > an existing ccenv setup keeps working once `actas` is on your PATH and an
 > installed ccenv skill is replaced: see
@@ -63,17 +64,42 @@ $ actas run -t codex                              # another agent, same identity
 
 ## Install
 
-actas is a single Python 3.9+ file. Until the first 2.0 release is tagged,
-install it from git with uv or pipx. This install includes PyYAML, so YAML
-manifests work out of the box.
+One line per platform. Each puts `actas` on your PATH; then run
+`actas init && actas doctor` (see [Quick start](#quick-start)).
 
-```bash
-uv tool install git+https://github.com/TsenkoTsenkov/actas
-pipx install git+https://github.com/TsenkoTsenkov/actas
-```
+| Platform | Command |
+|---|---|
+| macOS, Linux: **uv** (recommended) | `uv tool install actas` |
+| macOS, Linux: pipx | `pipx install actas` |
+| macOS, Linux: Homebrew | `brew tap tsenkotsenkov/actas https://github.com/TsenkoTsenkov/actas && brew install actas` |
+| macOS, Linux: no Python tooling | `curl -fsSL https://github.com/TsenkoTsenkov/actas/releases/latest/download/install.sh \| sh` |
+| Windows | Install [WSL](https://learn.microsoft.com/windows/wsl/install) (`wsl --install` in PowerShell), then use a Linux line inside it |
+| Try it without installing | `uvx actas --help` |
 
-Update with `uv tool upgrade actas` (or `pipx upgrade actas`). To remove it,
-see [Uninstall](#uninstall). Installed as `ccenv` before the rename? Run
+> [!IMPORTANT]
+> Until the first 2.0 release is tagged, the PyPI, Homebrew and install.sh
+> lines above have nothing to install yet. Install from git instead:
+>
+> ```bash
+> uv tool install git+https://github.com/TsenkoTsenkov/actas
+> pipx install git+https://github.com/TsenkoTsenkov/actas
+> brew tap tsenkotsenkov/actas https://github.com/TsenkoTsenkov/actas && brew install --HEAD actas
+> ```
+>
+> A 2.0 beta (`v2.0.0b1`) is a prerelease. uv and pipx install it while no
+> stable release exists. install.sh installs it only by name:
+> `curl -fsSL https://raw.githubusercontent.com/TsenkoTsenkov/actas/main/install.sh | sh -s -- --version v2.0.0b1`.
+> Homebrew installs only stable releases (or `--HEAD`).
+
+You need Python 3.9 or later: macOS has it with the Xcode Command Line
+Tools, Linux distributions ship it, and uv fetches one itself. The uv, pipx
+and Homebrew installs include a YAML parser (PyYAML, or `yq` for Homebrew).
+Native Windows is not supported: actas uses POSIX process and file APIs, so it
+runs under WSL.
+
+**Updating.** `uv tool upgrade actas`, `pipx upgrade actas`,
+`brew upgrade actas`, or re-run the install.sh line. To remove it, see
+[Uninstall](#uninstall). Installed as `ccenv` before the rename? Run
 `uv tool uninstall ccenv` first, then the install line above (it installs both
 `actas` and the `ccenv` alias).
 
@@ -84,34 +110,25 @@ no checkout for them: `actas setup skill` writes
 `actas --version` names the install: `actas 2.0.0b1 (package)` for uv or pipx
 (plus the git commit when it recorded one), `(git <commit>)` for a checkout.
 
-**A git checkout with a symlink.** Update with `git pull`.
-
-```bash
-git clone https://github.com/TsenkoTsenkov/actas ~/.local/share/actas
-mkdir -p ~/.local/bin
-ln -s ~/.local/share/actas/bin/actas ~/.local/bin/actas    # any directory on your PATH
-```
-
-actas is not on PyPI or Homebrew; use one of the methods above.
-
 **Tab completion** for commands, options and profile names:
 `eval "$(actas completion bash)"` in `~/.bashrc`, `eval "$(actas completion zsh)"`
 in `~/.zshrc` (after `compinit`), or
 `actas completion fish > ~/.config/fish/completions/actas.fish`.
 
 <details>
-<summary>install.sh (once a release is tagged)</summary>
+<summary>install.sh details</summary>
 
-It downloads the single-file release, checks its SHA-256 and installs it as
-`~/.local/bin/actas`. It never uses sudo, and it refuses to write through a
-symlink. No release is tagged yet, so this does not work today. uv and pipx
-also link into `~/.local/bin`: install.sh does not replace their `actas`, so
-switching from one of them means `uv tool uninstall actas` (or
-`pipx uninstall actas`) first.
+It downloads the single-file release asset, checks its SHA-256 against the
+release's `SHA256SUMS` and installs it as `~/.local/bin/actas` (`--dir` to
+change). It never uses sudo, and it refuses to write through a symlink. uv
+and pipx also link into `~/.local/bin`: install.sh does not replace their
+`actas`, so switching from one of them means `uv tool uninstall actas` (or
+`pipx uninstall actas`) first. Options: `--version TAG`, `--dir DIR`,
+`--force`; pass them after `sh -s --`. To read the script before running it:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/TsenkoTsenkov/actas/main/install.sh
-sh install.sh --version v2.0.0b1        # a prerelease is installed only by name
+curl -fsSLO https://github.com/TsenkoTsenkov/actas/releases/latest/download/install.sh
+sh install.sh --help
 ```
 
 Without `--version` it installs the latest stable release. Run the
@@ -121,10 +138,22 @@ this repository's release workflow.
 </details>
 
 <details>
+<summary>A git checkout with a symlink (for contributors)</summary>
+
+Update with `git pull`.
+
+```bash
+git clone https://github.com/TsenkoTsenkov/actas ~/.local/share/actas
+mkdir -p ~/.local/bin
+ln -s ~/.local/share/actas/bin/actas ~/.local/bin/actas    # any directory on your PATH
+```
+
+</details>
+
+<details>
 <summary>Optional tools</summary>
 
-You need Python 3.9 or later. On macOS, `python3` comes with the Xcode
-Command Line Tools; Linux distributions ship it. Everything else is optional:
+Everything except Python 3.9+ is optional:
 
 | Tool | Needed for |
 |---|---|
@@ -168,7 +197,8 @@ this repository. Keep it private.
 
    It removes only what actas wrote (your own keys stay) and works without a
    manifest.
-2. Remove the program: `uv tool uninstall actas` or `pipx uninstall actas`;
+2. Remove the program: `uv tool uninstall actas`, `pipx uninstall actas` or
+   `brew uninstall actas` (then `brew untap tsenkotsenkov/actas`);
    `rm ~/.local/bin/actas` for install.sh; for a checkout,
    `rm ~/.local/bin/actas && rm -rf ~/.local/share/actas`. Remove a `ccenv`
    alias link too, if you made one.
@@ -627,6 +657,14 @@ macOS with Python 3.10 and 3.13, plus Python 3.9 through uv, and builds the
 package. Conventions (tables-first design, placeholder names only, Python 3.9
 compatibility, one source for the agent rules) are in [AGENTS.md](AGENTS.md),
 written for coding agents but meant for every contributor.
+
+## Support
+
+actas is free and MIT-licensed. If it saves you time, you can
+[buy me a coffee](https://buymeacoffee.com/tsenkotsenkov). Bug reports and
+pull requests help just as much.
+
+[![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-tsenkotsenkov-FFDD00?logo=buymeacoffee&logoColor=black&style=for-the-badge)](https://buymeacoffee.com/tsenkotsenkov)
 
 ## License
 

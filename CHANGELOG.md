@@ -10,6 +10,32 @@ account, git identity and secrets to any command or agent, not only to Claude
 Code. **v1 manifests keep working unchanged** (see
 [Upgrading from v1](#upgrading-from-v1)).
 
+### Installing and releases
+
+- One-line installs: `uv tool install actas`, `pipx install actas`, Homebrew
+  (`brew tap tsenkotsenkov/actas https://github.com/TsenkoTsenkov/actas &&
+  brew install actas`), and `curl -fsSL .../releases/latest/download/install.sh | sh`.
+  On Windows, actas runs under WSL.
+- The release workflow publishes the wheel and sdist to PyPI (Trusted
+  Publishing), attaches them to the GitHub release with attestations, and on
+  a stable tag commits an updated `Formula/actas.rb`.
+- A Buy Me a Coffee link (`.github/FUNDING.yml`, README).
+
+### Fixed (audit)
+
+- An invalid `github.host` (such as a URL) is a manifest error instead of a
+  traceback in `status` and a malformed `gh:` ref everywhere else.
+- `actas list` and `list --check` report a profile doctor rejects instead of
+  crashing on it.
+- `actas shell` leaves out inherited variable names that are not valid shell
+  names, so they can never inject commands into `eval` or direnv.
+- A manifest that is not UTF-8 is a one-line error; a non-UTF-8 `~/.aws/config`
+  no longer crashes `doctor`.
+- `redact_argv` again hides only credential-like variables: a second
+  definition of its pattern also hid values such as `SSH_AUTH_SOCK`, which
+  changed the commands shown in ask_user text.
+- On native Windows, actas says to use WSL instead of failing on import.
+
 ### Renamed to actas
 
 ccenv is now **actas**: `actas exec client-a -- terraform apply` acts as

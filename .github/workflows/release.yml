@@ -1,8 +1,13 @@
 name: release
 
-# On a version tag (v2.0.0, v2.1.0b1, ...): attach the single-file actas,
-# install.sh and SHA256SUMS to a GitHub release, with a build-provenance
-# attestation for actas. Nothing is published to PyPI.
+# On a version tag (v2.0.0, v2.1.0b1, ...):
+#   1. release:  test, then attach the single-file actas, install.sh,
+#                SHA256SUMS, the wheel and the sdist to a GitHub release, with
+#                build-provenance attestations.
+#   2. pypi:     publish the wheel and sdist to PyPI (Trusted Publishing, no
+#                token; the one-time setup is in AGENTS.md, "Releasing").
+#   3. homebrew: on a stable tag only, rewrite Formula/actas.rb for the new
+#                asset and commit it to main.
 #
 # Users can check a download with:
 #   gh attestation verify actas --repo <owner>/actas
@@ -22,6 +27,10 @@ jobs:
       id-token: write          # sign the attestation
       attestations: write
       artifact-metadata: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      stable: ${{ steps.version.outputs.stable }}
+      sha256: ${{ steps.assets.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -29,31 +38,86 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3 (no floating v10 tag)
       - name: Run the tests
         run: |
           python -m pip install pyyaml     # also checks the README and examples/ manifests
           python -m unittest discover -s tests
       - name: The tag matches __version__ in bin/actas
+        id: version
         env:
           TAG: ${{ github.ref_name }}
         run: |
           version="$(python bin/actas --version | awk '{ print $2 }')"
           test "$TAG" = "v$version" || { echo "tag $TAG does not match actas $version" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *[a-z]*) echo "stable=false" ;; *) echo "stable=true" ;; esac >> "$GITHUB_OUTPUT"
       - name: Build the assets
+        id: assets
         run: |
-          mkdir dist
+          uv build --out-dir dist/python
           install -m 0755 bin/actas dist/actas
           install -m 0755 install.sh dist/install.sh
-          cd dist && sha256sum actas install.sh > SHA256SUMS && cat SHA256SUMS
+          cp dist/python/* dist/
+          cd dist && sha256sum actas install.sh *.whl *.tar.gz > SHA256SUMS && cat SHA256SUMS
+          echo "sha256=$(sha256sum actas | awk '{ print $1 }')" >> "$GITHUB_OUTPUT"
       - uses: actions/attest@v4
         with:
-          subject-path: dist/actas
+          subject-path: |
+            dist/actas
+            dist/*.whl
+            dist/*.tar.gz
+      - uses: actions/upload-artifact@v5
+        with:
+          name: python-dist
+          path: dist/python/
+          if-no-files-found: error
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          STABLE: ${{ steps.version.outputs.stable }}
         run: |
           pre=""
-          case "${TAG#v}" in *[a-z]*) pre="--prerelease" ;; esac
-          gh release create "$TAG" dist/actas dist/install.sh dist/SHA256SUMS \
+          [ "$STABLE" = true ] || pre="--prerelease"
+          gh release create "$TAG" dist/actas dist/install.sh dist/SHA256SUMS dist/*.whl dist/*.tar.gz \
             --repo "$GITHUB_REPOSITORY" --title "actas $TAG" --generate-notes --verify-tag $pre
+
+  # One-time setup on pypi.org: add a Trusted Publisher for this repository
+  # with workflow "release.yml" and environment "pypi" (AGENTS.md: Releasing).
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/actas/
+    permissions:
+      id-token: write          # Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: python-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  homebrew:
+    needs: release
+    if: needs.release.outputs.stable == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # commit Formula/actas.rb to main
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Update Formula/actas.rb
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA256: ${{ needs.release.outputs.sha256 }}
+        run: |
+          python3 .github/scripts/brew_formula.py "$VERSION" "$SHA256" > Formula/actas.rb
+          git diff --quiet && { echo "formula already up to date"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Homebrew: actas $VERSION"
+          git push origin HEAD:main
