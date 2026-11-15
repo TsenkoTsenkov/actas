@@ -10,6 +10,17 @@ account, git identity and secrets to any command or agent, not only to Claude
 Code. **v1 manifests keep working unchanged** (see
 [Upgrading from v1](#upgrading-from-v1)).
 
+### Installing and releases
+
+- One-line installs: `uv tool install actas`, `pipx install actas`, Homebrew
+  (`brew tap tsenkotsenkov/actas https://github.com/TsenkoTsenkov/actas &&
+  brew install actas`), and `curl -fsSL .../releases/latest/download/install.sh | sh`.
+  On Windows, actas runs under WSL.
+- The release workflow publishes the wheel and sdist to PyPI (Trusted
+  Publishing), attaches them to the GitHub release with attestations, and on
+  a stable tag commits an updated `Formula/actas.rb`.
+- A Buy Me a Coffee link (`.github/FUNDING.yml`, README).
+
 ### Renamed to actas
 
 ccenv is now **actas**: `actas exec client-a -- terraform apply` acts as

@@ -214,3 +214,11 @@ How to help:
   tag with a letter (`v2.0.0b1`) becomes a GitHub prerelease, which
   `install.sh`'s default `latest` never installs, so the first public v2 tag
   must be a stable one such as `v2.0.0`.
+  The workflow also publishes the wheel and sdist to PyPI and, for a stable
+  tag, commits a regenerated `Formula/actas.rb` (from
+  `.github/scripts/brew_formula.py`) to `main`. One-time setup before the
+  first tag: on pypi.org, add a pending Trusted Publisher for project
+  `actas`, owner `TsenkoTsenkov`, repository `actas`, workflow `release.yml`,
+  environment `pypi`; create the `pypi` environment in the repository's
+  settings; and if `main` is protected, let `github-actions[bot]` push to it
+  (or the homebrew job fails, after the release and PyPI are done).

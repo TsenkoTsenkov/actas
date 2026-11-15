@@ -281,7 +281,8 @@ class OtherTools(Base):  # SPEC test 34
         for d in (self.tmp / "cache", self.tmp / "state"):
             for root, _, files in os.walk(d):
                 for f in files:
-                    text = open(os.path.join(root, f), errors="replace").read()
+                    with open(os.path.join(root, f), errors="replace") as fh:
+                        text = fh.read()
                     for s in ALL_SECRETS:
                         self.assertNotIn(s, text, f)
 
