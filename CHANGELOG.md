@@ -3,7 +3,7 @@
 All notable changes to actas (called ccenv before 2.0). Version numbers follow
 [Semantic Versioning](https://semver.org/).
 
-## [2.0.0] - Unreleased (2026-11-12)
+## [2.0.0] - 2026-11-23
 
 actas ("act as") applies a profile's LLM provider, cloud accounts, GitHub
 account, git identity and secrets to any command or agent, not only to Claude

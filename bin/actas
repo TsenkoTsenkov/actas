@@ -32,7 +32,7 @@ except ImportError:                  # native Windows: no POSIX passwd database
     sys.exit("actas: native Windows is not supported; install and run actas inside WSL "
              "(https://learn.microsoft.com/windows/wsl/install)")
 
-__version__ = "2.0.0b1"
+__version__ = "2.0.0"
 BUILD = "script"  # the package build rewrites this to "package" (SPEC 5.4)
 
 HOME = Path.home()

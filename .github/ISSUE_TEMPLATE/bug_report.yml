@@ -1,0 +1,32 @@
+name: Bug report
+description: Something in actas does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste secret values**, tokens or the contents
+        of `~/.config/actas`. Use placeholders such as `client-a` and `example.com`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected and what you got (with the full output, redacted).
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: actas doctor
+      description: Output of `actas --version` and `actas doctor` (no secrets are printed).
+      render: text
+  - type: dropdown
+    id: os
+    attributes:
+      label: Platform
+      options: [macOS, Linux, Windows (WSL)]
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed with
+      options: [uv, pipx, Homebrew, install.sh, git checkout]

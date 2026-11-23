@@ -5,20 +5,28 @@
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)
 [![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/tsenkotsenkov)
 
-**actas — act as the right identity (LLM provider, cloud accounts, GitHub, git, secrets) for every
-project, in every terminal and agent.**
+**Give every project its own LLM provider, cloud accounts, GitHub account, git
+identity and secrets, in every terminal and every AI agent, without letting
+the agent promote itself to your admin account.**
 
 ```console
 $ actas exec client-a -- terraform apply     # act as client-a for one command
 ```
 
-You work for several clients, on personal projects and on open source. Each
-context has its own LLM provider (a claude.ai subscription, a company gateway,
-Bedrock, Vertex), its own AWS, GCP or Azure account, its own GitHub account and
-git identity, and its own tokens. actas keeps all of that in one manifest. It
-picks the profile from the directory you are in and applies it to **one
-process**: Claude Code, Codex, Gemini CLI, `terraform`, `aws`, or any other
-command.
+**Who it is for:** you run Claude Code, Codex or Gemini CLI across several
+clients, employers or personal accounts, and you are tired of `gh auth switch`,
+of `AWS_PROFILE` leaking between terminals, and of an agent pushing with the
+wrong GitHub account or running against the wrong AWS account.
+
+actas keeps every context in one manifest. It picks the profile from the
+directory you are in and applies it to **one process**: Claude Code, Codex,
+Gemini CLI, `terraform`, `aws`, or any other command. Secrets stay references
+(`keychain:`, `sops:`, `op://`) until the moment they are needed.
+
+**What no account switcher does:** an agent may act as another profile only if
+you allowed it, never at a higher privilege level, and never for a profile
+marked `confirm`. For those it stops and hands you the exact command to run
+yourself in your own terminal.
 
 [![actas demo: one manifest of profiles and roles; two terminals side by side as different accounts; an agent acting as another allowed profile and refused a more powerful one; the human approving it in their own terminal](docs/demo/actas-demo.gif)](docs/demo/actas-demo.mp4)
 
@@ -53,11 +61,8 @@ $ actas run -t codex                              # another agent, same identity
   macOS and Linux, and on Windows through WSL.
 
 > [!NOTE]
-> actas 2.0 is in beta: `main` is `2.0.0b1` and no release is tagged yet, so
-> install from git (see [Install](#install)). v1 manifests keep working unchanged; see
-> [Upgrading from v1](#upgrading-from-v1). actas was called ccenv until 2.0, and
-> an existing ccenv setup keeps working once `actas` is on your PATH and an
-> installed ccenv skill is replaced: see
+> Coming from v1 or from ccenv (the name before 2.0)? Your manifest keeps
+> working; see [Upgrading from v1](#upgrading-from-v1) and
 > [Coming from ccenv](docs/migration.md#coming-from-ccenv).
 
 [Install](#install) · [Quick start](#quick-start) · [Common setups](#common-setups) · [Roles and levels](#roles-levels-and-permission-sets) · [AI agents](#ai-agents) · [Where it works](#where-it-works) · [How it compares](#how-it-compares) · [Docs](#documentation) · [Upgrading from v1](#upgrading-from-v1)
@@ -76,20 +81,13 @@ One line per platform. Each puts `actas` on your PATH; then run
 | Windows | Install [WSL](https://learn.microsoft.com/windows/wsl/install) (`wsl --install` in PowerShell), then use a Linux line inside it |
 | Try it without installing | `uvx actas --help` |
 
-> [!IMPORTANT]
-> Until the first 2.0 release is tagged, the PyPI, Homebrew and install.sh
-> lines above have nothing to install yet. Install from git instead:
->
-> ```bash
-> uv tool install git+https://github.com/TsenkoTsenkov/actas
-> pipx install git+https://github.com/TsenkoTsenkov/actas
-> brew tap tsenkotsenkov/actas https://github.com/TsenkoTsenkov/actas && brew install --HEAD actas
-> ```
->
-> A 2.0 beta (`v2.0.0b1`) is a prerelease. uv and pipx install it while no
-> stable release exists. install.sh installs it only by name:
-> `curl -fsSL https://raw.githubusercontent.com/TsenkoTsenkov/actas/main/install.sh | sh -s -- --version v2.0.0b1`.
-> Homebrew installs only stable releases (or `--HEAD`).
+To run the latest `main` instead of a release:
+
+```bash
+uv tool install git+https://github.com/TsenkoTsenkov/actas
+```
+
+(or `pipx install git+…`, or `brew install --HEAD actas` after the tap).
 
 You need Python 3.9 or later: macOS has it with the Xcode Command Line
 Tools, Linux distributions ship it, and uv fetches one itself. The uv, pipx
@@ -107,7 +105,7 @@ The install carries the Claude Code skill and the direnv function, so you need
 no checkout for them: `actas setup skill` writes
 `~/.claude/skills/actas/SKILL.md`, and `actas setup direnv` writes
 `~/.config/direnv/lib/actas.sh`. Run them again after an upgrade.
-`actas --version` names the install: `actas 2.0.0b1 (package)` for uv or pipx
+`actas --version` names the install: `actas 2.0.0 (package)` for uv or pipx
 (plus the git commit when it recorded one), `(git <commit>)` for a checkout.
 
 **Tab completion** for commands, options and profile names:
