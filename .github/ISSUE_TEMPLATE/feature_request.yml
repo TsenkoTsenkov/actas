@@ -1,0 +1,17 @@
+name: Feature request
+description: A tool, provider, secret scheme or workflow actas should support.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Which agents, clouds, git hosts and secret stores you juggle, and how many contexts.
+    validations:
+      required: true
+  - type: textarea
+    id: want
+    attributes:
+      label: What you would like actas to do
+    validations:
+      required: true

@@ -1,6 +1,6 @@
 # The actas manifest
 
-> This describes the version 2 manifest, read by actas 2.0 (beta `2.0.0b1`; see the README's
+> This describes the version 2 manifest, read by actas 2.0 (see the README's
 > [Install](../README.md#install)). `actas --version` shows yours. actas 1.x reads only
 > [v1 manifests](#v1-manifests); it finds no profiles in a version 2 file (`actas list` prints
 > `no environments defined`).
