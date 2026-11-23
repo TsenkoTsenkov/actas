@@ -61,9 +61,8 @@ $ actas run -t codex                              # another agent, same identity
   macOS and Linux, and on Windows through WSL.
 
 > [!NOTE]
-> Coming from v1 or from ccenv (the name before 2.0)? Your manifest keeps
-> working; see [Upgrading from v1](#upgrading-from-v1) and
-> [Coming from ccenv](docs/migration.md#coming-from-ccenv).
+> Coming from v1? Your manifest keeps working; see
+> [Upgrading from v1](#upgrading-from-v1).
 
 [Install](#install) · [Quick start](#quick-start) · [Common setups](#common-setups) · [Roles and levels](#roles-levels-and-permission-sets) · [AI agents](#ai-agents) · [Where it works](#where-it-works) · [How it compares](#how-it-compares) · [Docs](#documentation) · [Upgrading from v1](#upgrading-from-v1)
 
@@ -97,9 +96,7 @@ runs under WSL.
 
 **Updating.** `uv tool upgrade actas`, `pipx upgrade actas`,
 `brew upgrade actas`, or re-run the install.sh line. To remove it, see
-[Uninstall](#uninstall). Installed as `ccenv` before the rename? Run
-`uv tool uninstall ccenv` first, then the install line above (it installs both
-`actas` and the `ccenv` alias).
+[Uninstall](#uninstall).
 
 The install carries the Claude Code skill and the direnv function, so you need
 no checkout for them: `actas setup skill` writes
@@ -198,8 +195,7 @@ this repository. Keep it private.
 2. Remove the program: `uv tool uninstall actas`, `pipx uninstall actas` or
    `brew uninstall actas` (then `brew untap tsenkotsenkov/actas`);
    `rm ~/.local/bin/actas` for install.sh; for a checkout,
-   `rm ~/.local/bin/actas && rm -rf ~/.local/share/actas`. Remove a `ccenv`
-   alias link too, if you made one.
+   `rm ~/.local/bin/actas && rm -rf ~/.local/share/actas`.
 3. Optionally remove what actas kept: `~/.claude/skills/actas` and
    `~/.config/direnv/lib/actas.sh` (from `actas setup`), `~/.cache/actas`,
    `~/.local/state/actas` (managed homes, the sync ledger, the audit log) and
