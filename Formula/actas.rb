@@ -10,6 +10,9 @@ class Actas < Formula
 
   desc "Per-project identities (LLM, cloud, GitHub, git, secrets) for terminals and agents"
   homepage "https://github.com/TsenkoTsenkov/actas"
+  url "https://github.com/TsenkoTsenkov/actas/releases/download/v2.0.0/actas"
+  version "2.0.0"
+  sha256 "ff93a44063bb6ff8cd5a75dc279707338ded87fcb0b864190fde9ec6f16a31ec"
   license "MIT"
   head "https://github.com/TsenkoTsenkov/actas.git", branch: "main"
 
